@@ -3,7 +3,7 @@ import { logger } from '$lib/logger';
 import { processMessages } from '$lib/messages';
 import { HttpResponseOutputParser } from 'langchain/output_parsers';
 import type { RequestHandler } from './$types';
-import { createHuggingFaceProvider, createOnlineSearchProvider, createOpenAIProvider, createOpenAIProviderAISI } from './providers';
+import { createHuggingFaceProvider, createOnlineSearchProvider, createOpenAIProvider } from './providers';
 import { checkIfMessageRequiresSearch, constructSystemPrompt, generatePromptTemplateContent, generateResponse, performOnlineSearch, updateMessageWithSearchResults } from './utils';
 
 import { StringOutputParser } from '@langchain/core/output_parsers';
@@ -71,10 +71,6 @@ export const POST: RequestHandler = (async ({ request }): Promise<Response> => {
         if (chatParams.model.baseURL?.includes("huggingface")) {
             provider = createHuggingFaceProvider(chatParams);
             logger.info("Using Hugging Face provider");
-        } else if (chatParams.model.baseURL?.includes("ai-safety-institute")) {
-            provider = createOpenAIProviderAISI(chatParams);
-            logger.info("Using AISI provider");
-            // return new Response("AISI provider not implemented yet", { status: 501 });
         } else {
             provider = createOpenAIProvider(chatParams);
             logger.info("Using OpenAI provider");

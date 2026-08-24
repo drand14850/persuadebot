@@ -46,26 +46,3 @@ export const createOnlineSearchProvider = (chatParams: ChatParamsType, enableStr
     });
 };
 
-
-
-///// providers for AISI /////
-
-export const createOpenAIProviderAISI = (chatParams: ChatParamsType, enableStreaming = false) => {
-    //https://v02.api.js.langchain.com/classes/langchain_openai.ChatOpenAI.html
-    // Log the parameters to debug
-    return new ChatOpenAI({
-        streaming: enableStreaming,
-        model: chatParams.model.name || "chat",
-        apiKey: decrypt(ENCRYPTION_KEY, ENCRYPTION_IV, chatParams.model.apiKeyEncrypted),
-        maxTokens: chatParams.model.options.maxTokens || 400,
-        temperature: chatParams.model.options.temperature || 1,
-        stop: ["<|im_end|>"],
-        topP: 1,
-        maxRetries: chatParams.model.options.maxRetries,
-        timeout: chatParams.model.options.timeout,
-        configuration: {
-            baseURL: chatParams.model.baseURL,
-        },
-    });
-};
-
