@@ -14,7 +14,7 @@
 	let isMounted: boolean = false;
 
 	onMount(() => {
-		if ($apiKeyEncrypted === "") {
+		if ($apiKeyEncrypted === "PROVIDE_ENCRYPTED_API_KEY_HERE") {
 			apiKeyEncrypted.set(getApiKeyEncryptedFromLocalStorage());
 		}
 		if ($apiKeyEncrypted) {
@@ -33,9 +33,12 @@
 		testCases.map((testCase, idx) => {
 			testCasesString[idx] = insertApiKeyEncrypted(
 				testCase.codeString,
-				$apiKeyEncrypted,
+				"",
 			);
 		});
+		if ($apiKeyEncrypted === "") {
+			apiKeyEncrypted.set("PROVIDE_ENCRYPTED_API_KEY_HERE");
+		}
 		localStorage.setItem("apiKeyEncrypted", $apiKeyEncrypted);
 	}
 </script>

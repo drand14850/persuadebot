@@ -19,7 +19,10 @@ if (process.env.NODE_ENV === 'development') {
 
 
 
+// Production defaults to 'warn' so the Vercel log shows only things that need attention.
+// info/debug calls then cost nothing — pino drops them before serializing.
+// Set LOG_LEVEL=info in the Vercel environment to turn the detail back on while debugging.
 export const logger = pino({
-    level: process.env.NODE_ENV === 'development' ? 'debug' : 'info',
+    level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'development' ? 'debug' : 'warn'),
     base: process.env.NODE_ENV === 'development' ? null : {}, 
 }, prettyStream);

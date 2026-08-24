@@ -1,11 +1,14 @@
 <script lang="ts">
+    import { PUBLIC_VERSION } from "$env/static/public";
+    import { addDemoMessage } from "../utils";
     import type { ChatMessageType } from "$lib/chatParams";
     import { chatParams } from "$lib/chatParams";
-    import bot from "$lib/icons/bot00.svg";
     import thumbsdown from "$lib/icons/thumbsdown.svg";
     import thumbsup from "$lib/icons/thumbsup.svg";
     import { isLoading } from "$lib/stores";
     import { marked } from "marked";
+    import vegapunkEggAI from "$lib/icons/vegapunkEggAI.svg";
+    import vegapunkEggCracked from "$lib/icons/vegapunkEggCracked.svg";
 
     export let message: ChatMessageType;
     export let index: number;
@@ -18,6 +21,19 @@
     let thumbsDownClass = `btn btn-xs  ${$chatParams.appearance.voteButtonOpacity}`;
     let highlightClass = "border-2 border-sky-500 hover:border-sky-500";
     let thumb: string = "";
+
+    let botAvatarLoadingUrl = vegapunkEggAI;
+    let botAvatarLoadedUrl = vegapunkEggCracked;
+    if ($chatParams.appearance.botAvatarUrl !== "") {
+        botAvatarLoadingUrl = $chatParams.appearance.botAvatarUrl;
+        botAvatarLoadedUrl = $chatParams.appearance.botAvatarUrl;
+    }
+    if ($chatParams.appearance.botAvatarLoadingUrl !== "") {
+        botAvatarLoadingUrl = $chatParams.appearance.botAvatarLoadingUrl;
+    }
+    if ($chatParams.appearance.botAvatarLoadedUrl !== "") {
+        botAvatarLoadedUrl = $chatParams.appearance.botAvatarLoadedUrl;
+    }
 
     function handleClick(thumb: string) {
         if (thumb === "up") {
@@ -36,21 +52,44 @@
 <div class="chat chat-start relative">
     {#if $chatParams.appearance.showBotAvatar}
         <div class="chat-image avatar indicator absolute top-2">
-            {#if $isLoading && index === nMessages - 1}
-                <span
-                    class="indicator-item badge badge-warning bg-[#6766db] text-white text-xs"
-                    >...</span
-                >
+            {#if ($isLoading && index === nMessages - 1) || message.content === ""}
+                {#if $chatParams.ui.stream}
+                    <span
+                        class="loading loading-dots loading-sm indicator-item badge badge-warning text-white mr-1 mt-2 bg-[#6766db]"
+                    >
+                    </span>
+                {:else}
+                    <span
+                        class="loading loading-dots loading-sm indicator-item badge badge-warning text-white mr-1 mt-2 bg-[#a9e415]"
+                    >
+                    </span>
+                {/if}
+                <div class="w-12 mt-2 rounded-full">
+                    <img
+                        alt="AI bot"
+                        fetchpriority="high"
+                        src={botAvatarLoadedUrl}
+                    />
+                </div>
+            {:else}
+                <div class="w-12 mt-2 rounded-full">
+                    <img alt="AI bot" src={botAvatarLoadingUrl} />
+                </div>
             {/if}
-            <div class="w-8 xs:w-10 rounded-full">
-                <img alt="Assistant avatar" src={bot} />
-            </div>
         </div>
     {/if}
 
     {#if $chatParams.ui.stream || !$isLoading || index < nMessages - 1}
         <div class={assistantClass}>
-            {@html marked(message.content)}
+            {@html marked(
+                addDemoMessage(
+                    message.content,
+                    PUBLIC_VERSION,
+                    $isLoading,
+                    index === nMessages - 1,
+                    $chatParams.appURL_,
+                ),
+            )}
         </div>
     {:else if !$chatParams.ui.stream && $isLoading && index === nMessages - 1}
         <div class={`chat-bubble ml-10 text-black bg-white`}></div>

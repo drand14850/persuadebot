@@ -2,7 +2,7 @@
 
 Source code for the Vegapunk apps at https://www.vegapunkdoc.dev/
 
-Not monitored for issues and updates. Use at your own risk.
+Not monitored for issues and updates. Use at your own risk. It might not be the latest version.
 
 ## Clone, fork, extend
 

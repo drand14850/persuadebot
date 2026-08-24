@@ -10,12 +10,7 @@
 
 	// when not streaming (generating text), add a blank message to pretend AI is typing/thinking
 	// when streaming, add a blank message only if online search is enabled (because internet search is slow and doesn't use streaming)
-	$: if (
-		(!$chatParams.ui.stream && $isLoading) ||
-		($chatParams.ui.stream &&
-			$isLoading &&
-			$chatParams.study.enableOnlineSearch > 0)
-	) {
+	$: if (!$chatParams.ui.stream && $isLoading) {
 		addEmptyAIMessage();
 	}
 

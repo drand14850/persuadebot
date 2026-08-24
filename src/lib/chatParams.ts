@@ -20,6 +20,8 @@ export interface ChatMessageType {
 export interface ModelOptions {
     maxTokens?: number;
     temperature?: number;
+    stop?: string[];
+    topP: number;
     presencePenalty?: number;
     frequencyPenalty?: number;
     maxRetries?: number;
@@ -43,6 +45,9 @@ export interface Study {
     stopKeyword?: string;
     enableOnlineSearch: number;
     sanitize: boolean;
+    // Qualtrics ${e://Field/ResponseID}. Casing deliberately matches Qualtrics rather than the
+    // camelCase used elsewhere here. Empty means database persistence stays off (see $lib/db).
+    ResponseID: string;
 }
 
 export interface UI {
@@ -66,8 +71,12 @@ export interface Appearance {
     bubbleUserTextColor: string;
     voteButtonOpacity: string;
     placeHolderInputText: string;
+    endButtonType: "text" | "icon";
     endChatText: string;
     showInputElement: boolean;
+    botAvatarUrl: string;
+    botAvatarLoadingUrl: string;
+    botAvatarLoadedUrl: string;
 }
 
 export interface ChatParamsType {
@@ -87,6 +96,8 @@ export const chatParams = writable<ChatParamsType>({
         options: {
             maxTokens: undefined,
             temperature: undefined,
+            stop: undefined,
+            topP: 1,
             presencePenalty: undefined,
             frequencyPenalty: undefined,
             maxRetries: 5,
@@ -102,7 +113,8 @@ export const chatParams = writable<ChatParamsType>({
         allowTextHighlight: false,
         stopKeyword: undefined,
         enableOnlineSearch: 0,
-        sanitize: true
+        sanitize: true,
+        ResponseID: ""
     },
     initialMessages: [],
     ui: {
@@ -125,8 +137,12 @@ export const chatParams = writable<ChatParamsType>({
         bubbleUserTextColor: 'text-white',
         voteButtonOpacity: "opacity-60",
         placeHolderInputText: "Say something...",
+        endButtonType: "text",
         endChatText: "Scroll down and proceed to the next section.",
         showInputElement: true,
+        botAvatarUrl: "",
+        botAvatarLoadingUrl: "",
+        botAvatarLoadedUrl: "",
     },
     appURL_: ""
 });

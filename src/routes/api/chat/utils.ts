@@ -18,7 +18,6 @@ export const decrypt = (key: string, iv: string, ciphertext: string): string => 
     return decrypted.toString(CryptoJS.enc.Utf8);
 }
 
-
 // https://github.com/vercel/ai/issues/1066#issuecomment-2059501479
 export const logStream = (originalStream: ReadableStream, throttleStream: number): ReadableStream => {
     const [loggedStream, loggingStream] = originalStream.tee();
@@ -60,7 +59,7 @@ export function constructSystemPrompt(messages: ChatMessageType[]): string {
     return promptSystem;
 }
 
-export function generateResponse(messages: ChatMessageType[], assistantText: string): Response {
+export function generateResponse(assistantText: string): Response {
     return new Response(JSON.stringify({
         aiText: assistantText,
     }), {
@@ -103,8 +102,7 @@ export function checkIfMessageRequiresSearch(message: ChatMessageType, provider:
 
     const messageClone = structuredClone(message);
 
-    messageClone.content = `Analyze the following user message within the square brackets and classify it as one of these categories: question, opinion, claim, argument, or request (choose the most dominant one if a message contains multiple categories; if unclear, respond 'other'): [${messageClone.content}]`;
-
+    messageClone.content = `Analyze the following message within the square brackets and classify it as one of these categories: question, opinion, claim, argument, or request: [${messageClone.content}]`;
 
     const promptContent = [
         ['system', systemPrompt],

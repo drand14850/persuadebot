@@ -1,0 +1,4 @@
+# This app is a chatbot embedded in Qualtrics surveys, not a public site, so nothing here
+# should be indexed.
+User-agent: *
+Disallow: /

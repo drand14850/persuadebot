@@ -3,6 +3,7 @@ import DOMPurify from "isomorphic-dompurify";
 import { get, writable, type Writable } from 'svelte/store';
 import { enableSubmit, timeStart } from "../routes/utils";
 import { chatParams } from "./chatParams";
+import type { ChatMessage } from "@langchain/core/messages";
 
 export interface ChatMessageType {
     id: string;
@@ -128,6 +129,7 @@ export function addEmptyAIMessage(): void {
 }
 
 
+
 export function addUserMessage(userText: string): void {
     messages.update((currentMessages) => {
         return [...currentMessages, generateNewUserMessage(userText)];
@@ -225,11 +227,13 @@ function validateMessages(messages: ChatMessageType[], clientSide: boolean = tru
         if (!validRoles.includes(message.role)) {
             errors.push(`Message ${index} invalid role: ${message.role}`);
         }
+        // Name the field: "expected string, got undefined" alone cannot be acted on, because
+        // both content and id produce that identical text.
         if (typeof message.content !== 'string') {
-            errors.push(`Message ${index} type error: expected string, got ${typeof message.content}`);
+            errors.push(`Message ${index} type error: content expected string, got ${typeof message.content}`);
         }
         if (typeof message.id !== 'string' && !initialMessage) {
-            errors.push(`Message ${index} type error: expected string, got ${typeof message.id}`);
+            errors.push(`Message ${index} type error: id expected string, got ${typeof message.id} (role: ${message.role}, content length: ${message.content?.length})`);
         }
         if (message.createdAt && !(message.createdAt instanceof Date) && !initialMessage) {
             errors.push(`Message ${index} type error: expected Date, got ${typeof message.createdAt}`);
@@ -264,12 +268,41 @@ export function convertMessageDates(messages: ChatMessageType[]): ChatMessageTyp
     return messages;
 }
 
+export function removeUndefinedMessages(messages: ChatMessageType[]): ChatMessageType[] {
+    messages = messages.filter((message) => message.content !== undefined);
+    return messages;
+}
+
+export function removeUnnecessaryEmptyMessages(messages: ChatMessageType[]): ChatMessageType[] {
+
+    if (messages[messages.length - 1]?.content && messages[messages.length - 2]?.content) {
+        const lastMessage = messages.pop();
+        const secondLastMessage = messages.pop();
+        if (lastMessage && secondLastMessage && lastMessage.content !== "" && secondLastMessage.content === "") {
+            // remove the second last message (push only the last message back into the array)
+            messages.push(lastMessage);
+            return messages
+        } else {
+            if (lastMessage && secondLastMessage) {
+                messages.push(secondLastMessage);
+                messages.push(lastMessage);
+                return messages
+            }
+        }
+        return messages;
+    }
+    return messages;
+}
+
 
 // main function to process messages by calling other helper functions
 export const processMessages = (messages: ChatMessageType[], isClient: boolean = true) => {
     if (!isClient) {
         messages = convertMessageDates(messages);
     }
+
+    messages = removeUndefinedMessages(messages);
+    messages = removeUnnecessaryEmptyMessages(messages);
     messages = validateMessages(messages, isClient);
     messages = filterAndSortMessages(messages);
     return messages

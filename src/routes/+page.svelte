@@ -5,6 +5,7 @@
 		messageInfo,
 		messages,
 	} from "$lib/messages";
+	import { syncConversation } from "$lib/db";
 	import { isLoading } from "$lib/stores";
 	import { afterUpdate, onMount } from "svelte";
 	import Counter from "./components/Counter.svelte";
@@ -66,6 +67,9 @@
 		// when the send/submit button for the input field has been disabled
 		nextSection = true;
 		sendMessageToParent($messages, nextSection);
+		// Save point 4: chat ended. Catches thumb ratings and highlights applied after the
+		// last assistant turn — wherever Qualtrics gets data, so does the database.
+		void syncConversation();
 		scrollToBottom(scrollElement);
 		console.log("ENDING CHAT.");
 	}

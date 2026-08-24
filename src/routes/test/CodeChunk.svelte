@@ -1,77 +1,96 @@
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { javascript } from "@codemirror/lang-javascript";
+	import { oneDark } from "@codemirror/theme-one-dark";
+	import beautify from "js-beautify";
+	import CodeMirror from "svelte-codemirror-editor";
 	import RunButtons from "./RunButtons.svelte";
 	import { apiKeyEncrypted } from "./stores";
 	import type { TestCase } from "./tests";
-	import { generateDivId } from "./utils";
+	import { generateDivId, insertApiKeyEncrypted } from "./utils";
 
 	export let testCase: TestCase;
 	export let testCaseString: string;
-	export let updatedValue = testCaseString;
-	export let minRows = 1;
-	export let maxRows = 21;
 
-	let textarea: HTMLTextAreaElement;
-	let lineHeight: number;
+	let updatedValue = testCaseString;
 
-	function computeLineHeight() {
-		const computedStyle = getComputedStyle(textarea);
-		lineHeight =
-			computedStyle.lineHeight === "normal"
-				? parseInt(computedStyle.fontSize) * 1.2
-				: parseInt(computedStyle.lineHeight);
+	function fixTitle(str: string): string {
+		return "testCase_" + str.replace(/\s/g, "_").toLowerCase();
 	}
 
-	let isMounted = false;
-	onMount(() => {
-		isMounted = true;
-		computeLineHeight();
-		adjustHeight();
-	});
+	function getApiKeyEncryptedFromString(str: string): string {
+		const regex = /apiKeyEncrypted: "([^"]*)"/;
+		const match = str.match(regex);
+		if (match) {
+			return match[1];
+		}
+		return "";
+	}
 
-	function adjustHeight() {
-		const currentHeight = textarea.style.height;
-		textarea.style.height = "auto";
-		const scrollHeight = textarea.scrollHeight;
-		textarea.style.height = currentHeight;
-		const newHeight = Math.min(
-			Math.max(scrollHeight, minRows * lineHeight),
-			maxRows * lineHeight,
+	function replaceApiKeyEncrypted(
+		str: string,
+		apiKeyEncrypted: string,
+	): string {
+		const regex = /apiKeyEncrypted: "([^"]*)"/;
+		const match = str.match(regex);
+		if (match) {
+			return str.replace(match[1], apiKeyEncrypted);
+		}
+		return str;
+	}
+
+	let title = fixTitle(testCase.title);
+	let storedValue = localStorage.getItem(title);
+	if (storedValue) {
+		updatedValue = beautify.js(storedValue);
+		console.log("Found in local storage\n", updatedValue);
+	} else {
+		updatedValue = beautify.js(
+			insertApiKeyEncrypted(testCaseString, $apiKeyEncrypted),
+			{ indent_size: 2 },
 		);
-		textarea.style.height = `${newHeight}px`;
-	}
-
-	$: if (isMounted && $apiKeyEncrypted) {
-		computeLineHeight();
-		adjustHeight();
-		updatedValue = textarea.value;
-	}
-
-	function handleInput(event: Event) {
-		event.preventDefault();
-		computeLineHeight();
-		adjustHeight();
-		updatedValue = textarea.value;
 	}
 </script>
 
 <div class="divider mt-8">
-	<span class="font-bold">{@html testCase.title}</span>
+	<button
+		class="font-bold"
+		on:click={() => {
+			updatedValue = beautify.js(
+				insertApiKeyEncrypted(testCaseString, $apiKeyEncrypted),
+				{ indent_size: 2 },
+			);
+			localStorage.setItem(title, updatedValue);
+		}}>{@html testCase.title}</button
+	>
 </div>
 
-{#key testCaseString}
-	<div id={generateDivId(testCase.title)}>
-		{@html testCase.desc}
-		<textarea
-			bind:this={textarea}
-			value={testCaseString}
-			on:input={handleInput}
-			id="message"
-			rows={minRows}
-			class="block p-2.5 w-full text-sm my-1 text-gray-200 bg-gray-700 rounded-md overflow-x-auto whitespace-pre-wrap"
-			placeholder=""
-			spellcheck="false"
-		></textarea>
-		<RunButtons testCaseString={updatedValue} />
-	</div>
-{/key}
+<div id={generateDivId(testCase.title)}>
+	<div class="pb-1">{@html testCase.desc}</div>
+
+	<CodeMirror
+		bind:value={updatedValue}
+		lang={javascript()}
+		tabSize={2}
+		useTab={true}
+		basic={true}
+		theme={oneDark}
+		on:change={() => {
+			apiKeyEncrypted.set(getApiKeyEncryptedFromString(updatedValue));
+			if ($apiKeyEncrypted === "") {
+				apiKeyEncrypted.set("PROVIDE_API_KEY_ENCRYPTED_HERE");
+			}
+			updatedValue = beautify.js(
+				replaceApiKeyEncrypted(updatedValue, $apiKeyEncrypted),
+				{ indent_size: 2 },
+			);
+			if (updatedValue === "") {
+				updatedValue = beautify.js(testCaseString);
+				localStorage.removeItem(title);
+			} else {
+				localStorage.setItem(title, updatedValue);
+			}
+		}}
+	/>
+
+	<RunButtons testCaseString={updatedValue} />
+</div>

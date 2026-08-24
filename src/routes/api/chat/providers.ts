@@ -1,8 +1,8 @@
-import { ENCRYPTION_IV, ENCRYPTION_KEY } from '$env/static/private';
-import type { ChatParamsType } from '$lib/chatParams';
+import { ENCRYPTION_KEY, ENCRYPTION_IV } from '$env/static/private';
 import { HfInference } from '@huggingface/inference';
-import { ChatOpenAI } from '@langchain/openai';
+import type { ChatParamsType } from '$lib/chatParams';
 import { decrypt } from './utils';
+import { ChatOpenAI } from '@langchain/openai';
 
 export const createOpenAIProvider = (chatParams: ChatParamsType, enableStreaming = false) => {
     //https://v02.api.js.langchain.com/classes/langchain_openai.ChatOpenAI.html
@@ -35,6 +35,7 @@ export const createOnlineSearchProvider = (chatParams: ChatParamsType, enableStr
     //https://v02.api.js.langchain.com/classes/langchain_openai.ChatOpenAI.html
     return new ChatOpenAI({
         streaming: enableStreaming,
+        // model: "perplexity/llama-3.1-sonar-large-128k-online",  // this is the old model
         model: "perplexity/sonar-pro",
         apiKey: decrypt(ENCRYPTION_KEY, ENCRYPTION_IV, chatParams.model.apiKeyEncrypted),
         configuration: {
@@ -44,3 +45,27 @@ export const createOnlineSearchProvider = (chatParams: ChatParamsType, enableStr
         timeout: chatParams.model.options.timeout,
     });
 };
+
+
+
+///// providers for AISI /////
+
+export const createOpenAIProviderAISI = (chatParams: ChatParamsType, enableStreaming = false) => {
+    //https://v02.api.js.langchain.com/classes/langchain_openai.ChatOpenAI.html
+    // Log the parameters to debug
+    return new ChatOpenAI({
+        streaming: enableStreaming,
+        model: chatParams.model.name || "chat",
+        apiKey: decrypt(ENCRYPTION_KEY, ENCRYPTION_IV, chatParams.model.apiKeyEncrypted),
+        maxTokens: chatParams.model.options.maxTokens || 400,
+        temperature: chatParams.model.options.temperature || 1,
+        stop: ["<|im_end|>"],
+        topP: 1,
+        maxRetries: chatParams.model.options.maxRetries,
+        timeout: chatParams.model.options.timeout,
+        configuration: {
+            baseURL: chatParams.model.baseURL,
+        },
+    });
+};
+

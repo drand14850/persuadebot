@@ -11,4 +11,8 @@ vite.config.ts.timestamp-*
 src/routes/test.svelte
 .claude/
 .cursor/
-
+.vercel/
+specs/
+scripts/
+CLAUDE.md
+vercel.json

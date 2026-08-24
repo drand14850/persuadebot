@@ -28,7 +28,7 @@ export const generateDivId = (title: string): string => {
 };
 
 export const getApiKeyEncryptedFromLocalStorage = (): string => {
-	return localStorage.getItem("apiKeyEncrypted") || "";
+	return localStorage.getItem("apiKeyEncrypted") || "PROVIDE_API_KEY_ENCRYPTED_HERE";
 }
 
 

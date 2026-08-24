@@ -1,7 +1,8 @@
 
 import type { ChatMessageType, ChatParamsType } from "$lib/chatParams";
 import { chatParams, updateChatParams } from "$lib/chatParams";
-import { addAIMessage, addUserMessage, countMessages, initialMessages, messageDisplaySetting, messageInfo, messages, processInitialMessages, type MessageInfoType } from "$lib/messages";
+import { addAIMessage, addUserMessage, countMessages, initialMessages, messageDisplaySetting, messageInfo, messages, processInitialMessages, type MessageInfoType, addEmptyAIMessage } from "$lib/messages";
+import { initConversationId, syncConversation } from "$lib/db";
 import { allowedOrigins, highlightedStrings, isLoading, thumbs } from "$lib/stores";
 import { tick } from "svelte";
 import { get, writable, type Writable } from "svelte/store";
@@ -237,13 +238,17 @@ function prepareParentMessage(
     nextSection: boolean,
 ): string {
 
-    let messageForParent: { messages: ChatMessageType[], userAgentInfo: UserAgentInfoType, thumbs: any[], highlightedStrings: string[], messageInfo: MessageInfoType, nextSection: boolean } = {
+    // remove initialMessages from chatParams to save space
+    const { initialMessages, ...chatParamsClone } = structuredClone(get(chatParams));
+
+    let messageForParent: { messages: ChatMessageType[], userAgentInfo: UserAgentInfoType, thumbs: any[], highlightedStrings: string[], messageInfo: MessageInfoType, nextSection: boolean, chatParams: any } = {
         messages: [],
         userAgentInfo: get(userAgentInfo).client,
         thumbs: get(thumbs),
         highlightedStrings: get(highlightedStrings),
         messageInfo: get(messageInfo),
         nextSection,
+        chatParams: chatParamsClone,
     };
 
     let firstMessageTime = new Date(messages[0].createdAt || Date.now());
@@ -338,7 +343,6 @@ function logMessageTypeCount(messages: ChatMessageType[]): void {
 
 
 export function isCorrectOriginAndData(event: MessageEvent): boolean {
-
     // not in frame, so don't need to check origin and data
     if (typeof parent === "undefined" || parent === window) return false;
 
@@ -374,6 +378,26 @@ export function isCorrectOriginAndData(event: MessageEvent): boolean {
 }
 
 
+// Sanity checks on what Qualtrics just handed the app. These only warn, never throw: a
+// misconfigured survey should still run, but the researcher gets a signal in the console
+// instead of finding out after data collection. Add further checks here.
+export function checkInitialParams(): void {
+    // The system prompt is not its own field; it is whatever initial messages carry
+    // role "system". Joining them means "empty" covers both cases: no system message at
+    // all, and a system message piped in blank from an unset Qualtrics field.
+    const systemPrompt = get(initialMessages)
+        .filter((message) => message.role === "system")
+        .map((message) => message.content ?? "")
+        .join("")
+        .trim();
+
+    if (systemPrompt === "") {
+        console.warn(
+            "CHECK FAILED: system prompt is empty. No initial message with role 'system' has content, so the model runs with no instructions.",
+        );
+    }
+}
+
 export function initializeChat(
     scrollElement: HTMLDivElement,
     nextSection: boolean,
@@ -408,6 +432,7 @@ export function initializeChat(
         receivedParentMessage.set(true);
     }
     processInitialMessages();
+    checkInitialParams();
 
     messageInfo.update((x) => {
         return {
@@ -415,6 +440,11 @@ export function initializeChat(
             nInitialMessages: get(initialMessages).length,
         };
     });
+
+    // Save point 1: initial messages received from Qualtrics.
+    // No await anywhere: a slow or broken database must never delay the chat.
+    initConversationId();
+    void syncConversation();
 
     if (get(inFrame) && parentObj) {
         console.log(
@@ -458,7 +488,11 @@ async function fetchChatResponse(stream: boolean = false) {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                messages: get(messages),
+                // Drop UI-only placeholders. addEmptyAIMessage() appends an empty assistant
+                // message with no id to trigger the loading avatar; it is not a real turn.
+                // Sending it made the server log a validation error on every request, and the
+                // server discarded it immediately afterwards anyway.
+                messages: get(messages).filter((message) => message.id),
                 chatParams: get(chatParams),
             }),
         });
@@ -514,18 +548,21 @@ export async function handleChatInteraction(
 
     // push latest message that needs to be sent over: either initial messages or user message
     if (!sendInitial) {
-        if (userInputText === "") {
+        if (userInputText === "" || userInputText === undefined) {
             return;
         } else {
             addUserMessage(userInputText);
+            void syncConversation();  // Save point 2: participant sent a message
         }
     }
 
+    if (get(chatParams).ui.stream) {
+        addEmptyAIMessage();  // to trigger loading avatar
+    }
     const response = await fetchChatResponse(get(chatParams).ui.stream);
     timeReceivedResponse.set(new Date().getTime());
     if (get(chatParams).ui.stream) { // streaming
         if (response && response.body) {
-
             const reader = response.body.getReader();
             const decoder = new TextDecoder("utf-8");
             let scrolled = false;
@@ -571,6 +608,9 @@ export async function handleChatInteraction(
         }
     }
 
+    // Save point 3: assistant finished generating or streaming
+    void syncConversation();
+
     handlePostChat(get(messages), nextSection, scrollElement);
 
     if (
@@ -593,3 +633,22 @@ function checkForStopKeyword(text: string, chatParams: ChatParamsType): boolean 
     }
     return false;
 }
+
+
+
+
+
+
+// Demo mode has two independent triggers: the build-time PUBLIC_VERSION variable, or an app
+// URL served from the vegapunkdemo deployment. The URL check exists because PUBLIC_VERSION is
+// inlined at build time, so a deployment built without it cannot be switched to demo mode
+// without a rebuild — matching on the URL the parent page reports covers that case.
+export const addDemoMessage = (text: string, version: string, isLoading: boolean, isLastMessage: boolean, appURL: string = ""): string => {
+    const isDemo = version === "demo" || (appURL ?? "").toLowerCase().includes("vegapunkdemo");
+    if (!isDemo || isLoading || !isLastMessage) return text;
+    let extraMessage = " This chatbot is only for demonstration only. Purchase the app to remove this message."
+
+    extraMessage = `<div class="shadow-sm bg-[#a9e415] rounded-lg p-1 text-[#6569d4] font-semibold">${extraMessage}</div>`
+
+    return text + "\n\n" + extraMessage;
+};

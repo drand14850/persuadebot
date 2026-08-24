@@ -3,7 +3,7 @@ import { logger } from '$lib/logger';
 import { processMessages } from '$lib/messages';
 import { HttpResponseOutputParser } from 'langchain/output_parsers';
 import type { RequestHandler } from './$types';
-import { createHuggingFaceProvider, createOnlineSearchProvider, createOpenAIProvider } from './providers';
+import { createHuggingFaceProvider, createOnlineSearchProvider, createOpenAIProvider, createOpenAIProviderAISI } from './providers';
 import { checkIfMessageRequiresSearch, constructSystemPrompt, generatePromptTemplateContent, generateResponse, performOnlineSearch, updateMessageWithSearchResults } from './utils';
 
 import { StringOutputParser } from '@langchain/core/output_parsers';
@@ -59,19 +59,31 @@ export const POST: RequestHandler = (async ({ request }): Promise<Response> => {
         }
 
         messages = processMessages(messages, false);
+
+        // delete if last message is an AI message and it's empty (because it was added to trigger the avatar)
+        if (messages.length > 0 && messages[messages.length - 1].role === "assistant" && messages[messages.length - 1].content === "") {
+            messages.pop();
+        }
+
         const promptSystem: string = constructSystemPrompt(messages);
 
         let provider;
         if (chatParams.model.baseURL?.includes("huggingface")) {
             provider = createHuggingFaceProvider(chatParams);
+            logger.info("Using Hugging Face provider");
+        } else if (chatParams.model.baseURL?.includes("ai-safety-institute")) {
+            provider = createOpenAIProviderAISI(chatParams);
+            logger.info("Using AISI provider");
+            // return new Response("AISI provider not implemented yet", { status: 501 });
         } else {
             provider = createOpenAIProvider(chatParams);
+            logger.info("Using OpenAI provider");
         }
 
         logger.info(`Data for API call: ${chatParams.model.baseURL}, ${chatParams.model.name}`);
         logger.info(`promptSystem: ${promptSystem}`)
         logger.debug({ messages });
-        logger.debug(`number of messages: ${messages.length}`);
+        logger.info(`number of messages: ${messages.length}`);
 
         if (chatParams.ui.stream) {
             if (chatParams.study.enableOnlineSearch > 0) {
@@ -181,6 +193,7 @@ async function handleGeneratedResponse(provider: any, chatParams: ChatParamsType
             const lastMessage = messages[messages.length - 1];
             const chain = checkIfMessageRequiresSearch(lastMessage, provider);
             const response = await chain.invoke({});
+            // const response = 'question';
             logger.debug("Message type: " + response);
             response.toLowerCase().includes("other") ? performSearch = false : performSearch = true;
         }
@@ -241,7 +254,8 @@ async function handleGeneratedResponse(provider: any, chatParams: ChatParamsType
     }
     logger.debug("Generated and returning response");
     logger.debug("=============================================")
-    return generateResponse(messages, assistantText);
+
+    return generateResponse(assistantText);
 }
 
 

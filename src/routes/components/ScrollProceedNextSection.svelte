@@ -2,6 +2,10 @@
 	import { chatParams } from "$lib/chatParams";
 </script>
 
-<p class="flex justify-center pt-2 text-lg font-bold text-pink-700 text-center">
-	{$chatParams.appearance.endChatText}
-</p>
+<div class="flex justify-center">
+	<div
+		class="badge badge-ghost text-lg font-semibold mt-3 p-4 shadow-sm text-[#6569d4]"
+	>
+		{$chatParams.appearance.endChatText}
+	</div>
+</div>

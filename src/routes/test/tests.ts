@@ -8,6 +8,22 @@ export interface TestCase {
 
 
 
+const empty = `
+// title: Empty code block
+// desc: Paste code snippet below to test it. See instructions below.
+// Paste JavaScript code below.
+// Click the title of the block above to reset the code block.
+// Comments are prefaced with // and are not executed and can be deleted.
+// Code snippet should define a valid object containing chat parameters.
+// The final line should save the object to localStorage (see examples below).
+// First two buttons below: Run the test case and launch a new chatbot in a new tab.
+// Third button: Copy the code snippet to the clipboard
+// Forth button: Run the test case in your browser (without opening a new tab).
+`
+
+
+
+
 const template = `
 // title: Simple test case with OpenAI
 // desc: Template for simple test cases.
@@ -131,7 +147,7 @@ localStorage.setItem("parentObj", JSON.stringify(parentObj));
 
 const throttleStream = `
 // title: Throttle streaming
-// desc: Throttle/slow down streaming
+// desc: Throttle/slow down streaming. Generally not recommended since it can lead to bad user experience.
 let parentObj = {
 	model: { name: "gpt-3.5-turbo", apiKeyEncrypted: "" },
 	ui: { stream: true, streamThrottleRate: 30 },
@@ -314,7 +330,7 @@ let parentObj = {
     model: {
 		name : "llama3.1",
 		baseURL: "http://localhost:11434/v1",
-		apiKeyEncrypted: "test_iuBr0TryuTWY7MqiPSaD3Q==" // "ollama" encrypted
+		apiKeyEncrypted: "iuBr0TryuTWY7MqiPSaD3Q==" // "ollama" encrypted
 	},
 	ui: { stream: true },
 	initialMessages: [
@@ -501,7 +517,7 @@ const enableOnlineSearch = `
 // title: Enable online search
 // desc: Enable online search. Perplexity will be called initially and the model specified below will use Perplexity's response to generate the final response.
 let parentObj = {
-	model: { name: "gpt-4o", apiKeyEncrypted: "" },
+	model: { name: "gpt-4o", apiKeyEncrypted: "", baseURL: "https://openrouter.ai/api/v1" },
 	study: { enableOnlineSearch: 2 },
 	ui: { stream: true },
 };
@@ -516,7 +532,7 @@ const enableOnlineSearchWithInitialMessage = `
 // title: Enable online search with initial message
 // desc: Enable online search. Perplexity will be called initially and the model specified below will use Perplexity's response to generate the final response.
 let parentObj = {
-	model: { name: "gpt-4o", apiKeyEncrypted: "" },
+	model: { name: "gpt-4o", apiKeyEncrypted: "", baseURL: "https://openrouter.ai/api/v1" },
 	study: { enableOnlineSearch: 1 },
 	ui: { stream: true },
 	initialMessages: [
@@ -594,6 +610,7 @@ localStorage.setItem("parentObj", JSON.stringify(parentObj));
 
 
 export const testCases: TestCase[] = [
+	createTestCase(empty),
 	createTestCase(template),
 	createTestCase(noAPIKeyProvided),
 	createTestCase(wrongAPIKeyProvided),

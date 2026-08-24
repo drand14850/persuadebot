@@ -40,13 +40,13 @@
 			}}>Clear <code>localStorage</code></button
 		>
 
-		<div class="m-1">
+		<!-- <div class="m-1">
 			<input
 				type="text"
 				placeholder={placeHolderText}
 				bind:value={$apiKeyEncrypted}
 				class="input input-bordered input-sm w-full"
 			/>
-		</div>
+		</div> -->
 	</div>
 </div>

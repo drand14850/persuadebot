@@ -13,7 +13,10 @@ const config = {
 		// If your environment is not supported, or you settled on a specific environment, switch out the adapter.
 		// See https://kit.svelte.dev/docs/adapters for more information about adapters.
 		// https://vercel.com/docs/functions/configuring-functions/duration
-		adapter: adapter({ maxDuration: 300 })
+		// Pin the function runtime so it no longer depends on whatever Node the Vercel
+		// build image happens to run. Without this the adapter infers it from the build
+		// Node and only knows 18/20, so a Vercel image upgrade breaks the build.
+		adapter: adapter({ maxDuration: 300, runtime: 'nodejs24.x' })
 	}
 };
 
