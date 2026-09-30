@@ -53,8 +53,15 @@ git push -u origin main
 
 ### 4. Vercel
 
-1. At <https://vercel.com/new>, import the GitHub repository. It detects SvelteKit on its own.
-2. Before clicking Deploy, open **Environment Variables** and add:
+1. At <https://vercel.com/new>, import the GitHub repository and click **Deploy** straight away.
+   The app builds fine without any settings. Until you add them, the chat can't reply and
+   `/admin` says login is switched off.
+
+   Deploy before adding the variables: Vercel won't save **Secret** variables for a SvelteKit
+   project until it has at least one deployment. (It reads the deployment to check that the
+   variable names won't be sent to browsers.)
+2. In the project, go to **Settings → Environment Variables** and add each of these as type
+   **Secret**, for the **Production** environment:
 
    | Name | Value |
    | --- | --- |
@@ -63,12 +70,14 @@ git push -u origin main
    | `TURSO_DATABASE_URL` | the `libsql://...` URL from step 2 |
    | `TURSO_AUTH_TOKEN` | the token from step 2 |
 
-3. Deploy. Your chat is at the `.vercel.app` address Vercel gives you, and the admin page is
-   at that address plus `/admin`.
+3. Redeploy so the deployment picks them up: **Deployments** → the latest one → **⋯** →
+   **Redeploy**.
+4. Open your `.vercel.app` address plus `/admin` and log in. The **Status** box should say
+   the OpenRouter key is set and the database is connected (Turso).
 
-If you change an environment variable later, redeploy (Deployments → ⋯ → Redeploy) for it to
-take effect. That's only needed for these four values. Prompt and settings changes made on
-`/admin` are live immediately.
+If you change an environment variable later, redeploy again for it to take effect. That's
+only needed for these four values. Prompt and settings changes made on `/admin` are live
+immediately.
 
 ## Day-to-day use
 
