@@ -1,48 +1,31 @@
-import { ENCRYPTION_KEY, ENCRYPTION_IV } from '$env/static/private';
-import { HfInference } from '@huggingface/inference';
-import type { ChatParamsType } from '$lib/chatParams';
-import { decrypt } from './utils';
+import { env } from '$env/dynamic/private';
+import type { BotConfig } from '$lib/server/botConfig';
 import { ChatOpenAI } from '@langchain/openai';
 
-export const createOpenAIProvider = (chatParams: ChatParamsType, enableStreaming = false) => {
-    //https://v02.api.js.langchain.com/classes/langchain_openai.ChatOpenAI.html
-    // Log the parameters to debug
-    return new ChatOpenAI({
-        streaming: enableStreaming,
-        model: chatParams.model.name,
-        apiKey: decrypt(ENCRYPTION_KEY, ENCRYPTION_IV, chatParams.model.apiKeyEncrypted),
-        maxTokens: chatParams.model.options.maxTokens,
-        temperature: chatParams.model.options.temperature,
-        frequencyPenalty: chatParams.model.options.frequencyPenalty,
-        presencePenalty: chatParams.model.options.presencePenalty,
-        maxRetries: chatParams.model.options.maxRetries,
-        timeout: chatParams.model.options.timeout,
-        configuration: {
-            baseURL: chatParams.model.baseURL,
-        },
-    });
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+// OpenRouter speaks the OpenAI chat API, so the OpenAI client works unchanged. The key comes
+// from the server environment only; nothing the browser sends can change the key, model or
+// endpoint.
+export const createChatModel = (config: BotConfig) => {
+	//https://v02.api.js.langchain.com/classes/langchain_openai.ChatOpenAI.html
+	const model = new ChatOpenAI({
+		streaming: true,
+		model: config.model,
+		apiKey: env.OPENROUTER_API_KEY,
+		temperature: config.temperature ?? undefined,
+		maxTokens: config.maxTokens,
+		maxRetries: 2,
+		timeout: 120_000, // milliseconds
+		configuration: {
+			// OPENROUTER_BASE_URL is only for pointing local tests at a stub server.
+			baseURL: env.OPENROUTER_BASE_URL || OPENROUTER_BASE_URL
+		}
+	});
+	if (config.temperature === null) {
+		// ChatOpenAI falls back to temperature 1 when none is given. Clearing it leaves the field
+		// out of the request, so the model's own default applies as the admin page promises.
+		(model as { temperature?: number }).temperature = undefined;
+	}
+	return model;
 };
-
-export const createHuggingFaceProvider = (chatParams: ChatParamsType) => {
-    // https://www.npmjs.com/package/@huggingface/inference
-    // BUT: maybe have to set up a custom langchain provider instead
-    const inference = new HfInference(decrypt(ENCRYPTION_KEY, ENCRYPTION_IV, chatParams.model.apiKeyEncrypted));
-    return inference.endpoint(chatParams.model.baseURL);
-};
-
-
-export const createOnlineSearchProvider = (chatParams: ChatParamsType, enableStreaming = false) => {
-    //https://v02.api.js.langchain.com/classes/langchain_openai.ChatOpenAI.html
-    return new ChatOpenAI({
-        streaming: enableStreaming,
-        // model: "perplexity/llama-3.1-sonar-large-128k-online",  // this is the old model
-        model: "perplexity/sonar-pro",
-        apiKey: decrypt(ENCRYPTION_KEY, ENCRYPTION_IV, chatParams.model.apiKeyEncrypted),
-        configuration: {
-            baseURL: "https://openrouter.ai/api/v1",
-        },
-        maxRetries: chatParams.model.options.maxRetries,
-        timeout: chatParams.model.options.timeout,
-    });
-};
-

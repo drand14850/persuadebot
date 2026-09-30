@@ -17,10 +17,8 @@
         getScrollElement,
         inputElementOpacity,
         isAtBottom,
-        receivedParentMessage,
         scrolledUponSubmit,
         handleChatInteraction,
-        sendMessageToParent,
         timeStart,
         userSentMessage,
     } from "../utils";
@@ -34,7 +32,7 @@
         if ($chatParams.study.sanitize) {
             userInput.set(DOMPurify.sanitize($userInput));
         }
-        if ($userInput === "") {
+        if ($userInput.trim() === "") {
             return;
         }
         e.preventDefault();
@@ -47,7 +45,6 @@
         }
 
         scrollElement = getScrollElement(scrollElement);
-        receivedParentMessage.set(true);
         isAtBottom.set(checkAtBottom(scrollElement));
         isLoading.set(true);
         continueScroll.set(true);
@@ -63,12 +60,8 @@
             });
         }
 
-        console.log(
-            `\n\nSTART: =============================\n${new Date().toISOString()}\nSend API request`,
-        );
-        sendMessageToParent($messages, nextSection);
         countMessagesAndTime($messages);
-        handleChatInteraction(false, $userInput, scrollElement, nextSection);
+        handleChatInteraction($userInput, scrollElement, nextSection);
         $userInput = "";
 
         isAtBottom.set(checkAtBottom(scrollElement));
@@ -76,7 +69,6 @@
 
     const stopRequest = (e: Event) => {
         e.preventDefault();
-        sendMessageToParent($messages, nextSection);
         isLoading.set(false);
         messageDisplaySetting.update((x) => {
             return { ...x, doneReading: true };
@@ -118,6 +110,7 @@
         <input
             class={`input input-bordered rounded-lg w-full ${$inputElementOpacity}`}
             placeholder={$chatParams.appearance.placeHolderInputText}
+            maxlength="4000"
             disabled={$disableInputElement}
             bind:value={$userInput}
             on:paste={preventPaste}

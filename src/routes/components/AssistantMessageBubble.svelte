@@ -1,6 +1,5 @@
 <script lang="ts">
-    import { PUBLIC_VERSION } from "$env/static/public";
-    import { addDemoMessage } from "../utils";
+    import DOMPurify from "isomorphic-dompurify";
     import type { ChatMessageType } from "$lib/chatParams";
     import { chatParams } from "$lib/chatParams";
     import thumbsdown from "$lib/icons/thumbsdown.svg";
@@ -81,15 +80,11 @@
 
     {#if $chatParams.ui.stream || !$isLoading || index < nMessages - 1}
         <div class={assistantClass}>
-            {@html marked(
-                addDemoMessage(
-                    message.content,
-                    PUBLIC_VERSION,
-                    $isLoading,
-                    index === nMessages - 1,
-                    $chatParams.appURL_,
-                ),
-            )}
+            <!-- Model output is untrusted: markdown may carry raw HTML, so it is sanitised
+                 before rendering. ADD_ATTR keeps the target="_blank" set in Messages.svelte. -->
+            {@html DOMPurify.sanitize(String(marked(message.content)), {
+                ADD_ATTR: ["target"],
+            })}
         </div>
     {:else if !$chatParams.ui.stream && $isLoading && index === nMessages - 1}
         <div class={`chat-bubble ml-10 text-black bg-white`}></div>

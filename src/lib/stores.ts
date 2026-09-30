@@ -10,5 +10,3 @@ export const thumbs: Writable<any[]> = writable([]);
 // Store for highlighted strings, which are likely strings
 export const highlightedStrings: Writable<string[]> = writable([]);
 
-export const allowedOrigins: Writable<string[]> = writable(["qualtrics.com", "localhost", "qualtrics"]);
-

@@ -14,27 +14,13 @@ export interface ChatMessageType {
     createdAt: Date;
     thumb?: string;
     thumbAt?: Date;
+    // Shown to the visitor but never sent back to the model (e.g. "something went wrong").
+    isError?: boolean;
     role: 'user' | 'assistant' | 'system';
 }
 
-export interface ModelOptions {
-    maxTokens?: number;
-    temperature?: number;
-    stop?: string[];
-    topP: number;
-    presencePenalty?: number;
-    frequencyPenalty?: number;
-    maxRetries?: number;
-    timeout?: number; // milliseconds
-    onFinish?: () => void;
-}
-
-export interface Model {
-    name: string;
-    baseURL: string;
-    apiKeyEncrypted: string;
-    options: ModelOptions;
-}
+// The model, prompt and API key are not here: they live on the server (see
+// $lib/server/botConfig) and are edited at /admin. These are display settings only.
 
 export interface Study {
     maxUserMessages: number;
@@ -43,11 +29,7 @@ export interface Study {
     showVoteButtons?: boolean;
     allowTextHighlight?: boolean;
     stopKeyword?: string;
-    enableOnlineSearch: number;
     sanitize: boolean;
-    // Qualtrics ${e://Field/ResponseID}. Casing deliberately matches Qualtrics rather than the
-    // camelCase used elsewhere here. Empty means database persistence stays off (see $lib/db).
-    ResponseID: string;
 }
 
 export interface UI {
@@ -73,6 +55,7 @@ export interface Appearance {
     placeHolderInputText: string;
     endButtonType: "text" | "icon";
     endChatText: string;
+    notice: string;
     showInputElement: boolean;
     botAvatarUrl: string;
     botAvatarLoadingUrl: string;
@@ -80,31 +63,13 @@ export interface Appearance {
 }
 
 export interface ChatParamsType {
-    model: Model;
     study: Study;
     initialMessages: ChatMessageType[];
     ui: UI;
     appearance: Appearance;
-    appURL_: string;
 }
 
 export const chatParams = writable<ChatParamsType>({
-    model: {
-        name: "gpt-4o",
-        baseURL: "https://api.openai.com/v1/",
-        apiKeyEncrypted: "",
-        options: {
-            maxTokens: undefined,
-            temperature: undefined,
-            stop: undefined,
-            topP: 1,
-            presencePenalty: undefined,
-            frequencyPenalty: undefined,
-            maxRetries: 5,
-            timeout: 600000,  // milliseconds
-            onFinish: undefined
-        }
-    },
     study: {
         maxUserMessages: +Infinity,
         maxTime: +Infinity,
@@ -112,13 +77,12 @@ export const chatParams = writable<ChatParamsType>({
         showVoteButtons: false,
         allowTextHighlight: false,
         stopKeyword: undefined,
-        enableOnlineSearch: 0,
         sanitize: true,
-        ResponseID: ""
     },
     initialMessages: [],
     ui: {
-        stream: false,
+        // /api/chat always streams
+        stream: true,
         streamThrottleRate: 0,
         preventPaste: false,
         showMessageCount: "none",
@@ -138,17 +102,19 @@ export const chatParams = writable<ChatParamsType>({
         voteButtonOpacity: "opacity-60",
         placeHolderInputText: "Say something...",
         endButtonType: "text",
-        endChatText: "Scroll down and proceed to the next section.",
+        endChatText: "This conversation has ended.",
+        notice: "",
         showInputElement: true,
         botAvatarUrl: "",
         botAvatarLoadingUrl: "",
         botAvatarLoadedUrl: "",
     },
-    appURL_: ""
 });
 
 
-type UpdateChatParamsType = (updates: Partial<ChatParamsType>) => void;
+type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
+
+type UpdateChatParamsType = (updates: DeepPartial<ChatParamsType>) => void;
 
 export const updateChatParams: UpdateChatParamsType = (updates) => {
 

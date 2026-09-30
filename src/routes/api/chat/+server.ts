@@ -1,258 +1,230 @@
-import type { ChatMessageType, ChatParamsType } from '$lib/chatParams';
+import { env } from '$env/dynamic/private';
 import { logger } from '$lib/logger';
-import { processMessages } from '$lib/messages';
-import { HttpResponseOutputParser } from 'langchain/output_parsers';
-import type { RequestHandler } from './$types';
-import { createHuggingFaceProvider, createOnlineSearchProvider, createOpenAIProvider } from './providers';
-import { checkIfMessageRequiresSearch, constructSystemPrompt, generatePromptTemplateContent, generateResponse, performOnlineSearch, updateMessageWithSearchResults } from './utils';
-
-import { StringOutputParser } from '@langchain/core/output_parsers';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { getCurrentConfig, saveHistory, saveReply, type TurnMessage } from '$lib/server/db';
+import {
+	AIMessage,
+	HumanMessage,
+	SystemMessage,
+	type AIMessageChunk,
+	type BaseMessage
+} from '@langchain/core/messages';
 import { z } from 'zod';
+import type { RequestHandler } from './$types';
+import { createChatModel } from './providers';
 
-// Hosts allowed to receive a DECRYPTED provider key.
-// The request body supplies both `apiKeyEncrypted` and `baseURL`, so without this
-// allowlist a caller could pair any ciphertext with a server they control and have
-// us decrypt the key straight to them. Default deny: unlisted hosts are rejected.
-const ALLOWED_HOSTS = new Set([
-    'api.openai.com',
-    'openrouter.ai',
+// This endpoint is public and every call is paid for, so a request is bounded here no matter
+// what the admin settings say. The real spending cap is the credit limit on the OpenRouter key.
+const MAX_BODY_CHARS = 1_000_000;
+const MAX_USER_MESSAGE_CHARS = 6_000; // the input box allows 4000; sanitising can lengthen it
+const MAX_ASSISTANT_MESSAGE_CHARS = 50_000; // above the longest reply maxTokens allows
+const MAX_HISTORY_MESSAGES = 500;
+// Only the most recent messages that fit this budget are sent to the model (~30k tokens), so
+// a long conversation keeps working instead of overflowing the model's context window.
+const MAX_MODEL_INPUT_CHARS = 120_000;
+const SAVE_TIMEOUT_MS = 5_000;
+
+// Some providers reject a conversation whose first turn is the assistant's, which is what a
+// greeting produces. This stands in for the visitor's arrival so the greeting has something
+// to follow.
+const OPENING_USER_TURN = '(The visitor has opened the chat.)';
+const CUT_OFF_NOTE = '\n\n_(The reply was cut off. Please try again.)_';
+
+const MessageSchema = z.discriminatedUnion('role', [
+	z.object({ role: z.literal('user'), content: z.string().max(MAX_USER_MESSAGE_CHARS) }),
+	z.object({ role: z.literal('assistant'), content: z.string().max(MAX_ASSISTANT_MESSAGE_CHARS) })
 ]);
 
-// Compare the PARSED hostname, never a substring. "https://api.openai.com.evil.com"
-// and "https://api.openai.com@evil.com" both contain an allowed host as a substring
-// but resolve to evil.com — only URL parsing reports where the request actually goes.
-const allowedBaseURL = z.string().url().refine(
-    (raw) => {
-        try {
-            const url = new URL(raw);
-            return url.protocol === 'https:' && ALLOWED_HOSTS.has(url.hostname);
-        } catch {
-            return false; // unparseable -> fail closed
-        }
-    },
-    { message: 'baseURL host is not allowed' }
-);
-
-// Validates only the security-critical field; everything else passes through
-// untouched so existing behaviour and types are unaffected.
+// Deliberately has no prompt, model or key fields: the browser only supplies the conversation.
 const ChatRequestSchema = z.object({
-    chatParams: z.object({
-        model: z.object({ baseURL: allowedBaseURL }).passthrough(),
-    }).passthrough(),
-}).passthrough();
+	conversationId: z.string().uuid(),
+	messages: z.array(MessageSchema).min(1).max(MAX_HISTORY_MESSAGES)
+});
 
-export const POST: RequestHandler = (async ({ request }): Promise<Response> => {
-    console.log("\n\n\n\n\n")
-    logger.info(`=========== ${new Date().toISOString()} ======================`);
-    try {
-        const response = await request.json() as { messages: ChatMessageType[], chatParams: ChatParamsType };
-        logger.debug(`Incoming request data object keys: ${Object.keys(response).join(", ")}`);
-        let { messages, chatParams } = response;
+export const POST: RequestHandler = async ({ request }): Promise<Response> => {
+	const raw = await request.text();
+	if (raw.length > MAX_BODY_CHARS) {
+		return new Response('Payload too large', { status: 413 });
+	}
 
-        // Must run BEFORE any provider is built: the create*Provider() functions decrypt
-        // the API key, so validating afterwards would mean the plaintext already exists.
-        const parsed = ChatRequestSchema.safeParse(response);
-        if (!parsed.success) {
-            logger.warn(`Rejected request: ${parsed.error.issues[0]?.message} (baseURL: ${chatParams?.model?.baseURL})`);
-            return new Response("Invalid request", { status: 400 });
-        }
+	let parsed;
+	try {
+		parsed = ChatRequestSchema.safeParse(JSON.parse(raw));
+	} catch {
+		return new Response('Invalid JSON', { status: 400 });
+	}
+	if (!parsed.success) {
+		logger.warn(`Rejected chat request: ${parsed.error.issues[0]?.message}`);
+		return new Response('Invalid request', { status: 400 });
+	}
 
-        messages = processMessages(messages, false);
+	const { conversationId, messages } = parsed.data;
+	const last = messages[messages.length - 1];
+	if (last.role !== 'user' || last.content.trim() === '') {
+		return new Response('The last message must be a non-empty visitor message', { status: 400 });
+	}
 
-        // delete if last message is an AI message and it's empty (because it was added to trigger the avatar)
-        if (messages.length > 0 && messages[messages.length - 1].role === "assistant" && messages[messages.length - 1].content === "") {
-            messages.pop();
-        }
+	let loaded;
+	try {
+		loaded = await getCurrentConfig();
+	} catch (error) {
+		// Fail closed: answering with the default prompt would quietly run the wrong bot.
+		logger.error(error, 'Could not load bot config from the database:');
+		return new Response('Chat is temporarily unavailable', { status: 503 });
+	}
+	const { config, id: configId } = loaded;
 
-        const promptSystem: string = constructSystemPrompt(messages);
+	const userMessageCount = messages.filter((m) => m.role === 'user').length;
+	if (config.maxUserMessages > 0 && userMessageCount > config.maxUserMessages) {
+		return Response.json({ error: 'limit' }, { status: 429 });
+	}
 
-        let provider;
-        if (chatParams.model.baseURL?.includes("huggingface")) {
-            provider = createHuggingFaceProvider(chatParams);
-            logger.info("Using Hugging Face provider");
-        } else {
-            provider = createOpenAIProvider(chatParams);
-            logger.info("Using OpenAI provider");
-        }
+	// Saved before the model is called, so the visitor's message is on record even if the model
+	// fails or the server is shut down mid-reply (e.g. because the visitor closed the page).
+	await saveSafely(() => saveHistory(conversationId, messages, configId));
 
-        logger.info(`Data for API call: ${chatParams.model.baseURL}, ${chatParams.model.name}`);
-        logger.info(`promptSystem: ${promptSystem}`)
-        logger.debug({ messages });
-        logger.info(`number of messages: ${messages.length}`);
+	if (!env.OPENROUTER_API_KEY) {
+		logger.error('OPENROUTER_API_KEY is not set.');
+		return new Response('Chat is not configured', { status: 503 });
+	}
 
-        if (chatParams.ui.stream) {
-            if (chatParams.study.enableOnlineSearch > 0) {
-                // if using online search, we need to generate response with online search first
-                return await handleGeneratedResponse(provider, chatParams, promptSystem, messages);
-            } else {
-                return await handleStreamingResponse(provider, chatParams, promptSystem, messages);
-            }
-        } else {
-            return await handleGeneratedResponse(provider, chatParams, promptSystem, messages);
-        }
+	const abort = new AbortController();
+	let iterator: AsyncIterator<AIMessageChunk>;
+	let firstText = '';
+	let finished = false;
 
-    } catch (error) {
-        let statusCode = 400;
-        if (error instanceof Error) {
-            const errorMessage = error.message;
-            logger.error(errorMessage, "Error handling request:");
-            if (errorMessage.toLowerCase().includes("api key") || (error as any).status === 401) {
-                statusCode = 401;
-            }
-        } else {
-            logger.error(error, "Error handling request (unknown error):");
-        }
-        return new Response("Internal Server Error", { status: statusCode });
-    }
-}) satisfies RequestHandler;
+	// Wait for the first piece of text before answering, so the common failures (bad key,
+	// unknown model, no credit) become an error status the page can show, not an empty reply.
+	try {
+		const stream = await createChatModel(config).stream(toModelMessages(config.systemPrompt, messages), {
+			signal: abort.signal
+		});
+		iterator = stream[Symbol.asyncIterator]();
+		while (firstText === '') {
+			const result = await iterator.next();
+			if (result.done) {
+				finished = true;
+				break;
+			}
+			firstText = chunkText(result.value);
+		}
+	} catch (error) {
+		logger.error(error, `Model request failed (model: ${config.model}):`);
+		return new Response('Model request failed', { status: 502 });
+	}
 
+	if (firstText === '') {
+		logger.error(`Model returned an empty reply (model: ${config.model}).`);
+		return new Response('Model returned an empty reply', { status: 502 });
+	}
 
+	const encoder = new TextEncoder();
+	let open = true;
 
-async function handleStreamingResponse(provider: any,
-    chatParams: ChatParamsType, promptSystem: string,
-    messages: ChatMessageType[]): Promise<Response> {
+	const body = new ReadableStream<Uint8Array>({
+		async start(controller) {
+			const send = (text: string) => {
+				if (!open || text === '') return;
+				try {
+					controller.enqueue(encoder.encode(text));
+				} catch {
+					open = false;
+				}
+			};
 
-    logger.debug("Streaming response...");
+			let reply = firstText;
+			send(firstText);
+			try {
+				while (!finished && open) {
+					const result = await iterator.next();
+					if (result.done) break;
+					const text = chunkText(result.value);
+					reply += text;
+					send(text);
+				}
+			} catch (error) {
+				if (!abort.signal.aborted) {
+					logger.error(error, `Model stream failed partway (model: ${config.model}):`);
+					send(CUT_OFF_NOTE);
+				}
+			}
 
-    const promptContent = generatePromptTemplateContent(messages, promptSystem);
-    const parser = new HttpResponseOutputParser();
-    const promptTemplate = ChatPromptTemplate.fromMessages(promptContent);
-    const conversationChain = promptTemplate.pipe(provider).pipe(parser);
+			// Also reached when the visitor leaves mid-reply, so a partial reply is saved as far as
+			// it got. Saved before closing so the write finishes while the function is still
+			// running; the visitor already has the text, so this only delays re-enabling the input.
+			await saveSafely(() => saveReply(conversationId, messages.length, reply, configId));
+			if (open) {
+				try {
+					controller.close();
+				} catch {
+					// already closed by the visitor
+				}
+			}
+		},
+		cancel() {
+			// The visitor left mid-reply: stop generating tokens nobody will read.
+			open = false;
+			abort.abort();
+		}
+	});
 
-    try {
-        const responseStream = await conversationChain.stream({});
-        const httpResponse = new Response(responseStream, {
-            headers: {
-                "Content-Type": "text/plain; charset=utf-8",
-            },
-        });
-        logger.debug("=============================================")
-        return httpResponse;
-    } catch (error) {
-        if (error instanceof Error) {
-            logger.error(error, "Error streaming text:");
-            const status = (error as any).status || 400;
-            return new Response("Internal Server Error", { status });
-        } else {
-            logger.error("An unknown error occurred", "Error streaming text:");
-            return new Response("Internal Server Error", { status: 500 });
-        }
-    }
+	return new Response(body, {
+		headers: {
+			'Content-Type': 'text/plain; charset=utf-8',
+			'Cache-Control': 'no-store'
+		}
+	});
+};
 
+function toModelMessages(systemPrompt: string, messages: TurnMessage[]): BaseMessage[] {
+	const recent = keepMostRecent(messages, MAX_MODEL_INPUT_CHARS);
+	const modelMessages: BaseMessage[] = [];
+
+	if (systemPrompt.trim() !== '') {
+		modelMessages.push(new SystemMessage(systemPrompt));
+	}
+	if (recent[0]?.role === 'assistant') {
+		modelMessages.push(new HumanMessage(OPENING_USER_TURN));
+	}
+	for (const message of recent) {
+		modelMessages.push(
+			message.role === 'user' ? new HumanMessage(message.content) : new AIMessage(message.content)
+		);
+	}
+	return modelMessages;
 }
 
-
-
-async function handleGeneratedResponse(provider: any, chatParams: ChatParamsType, promptSystem: string, messages: ChatMessageType[]): Promise<Response> {
-
-    logger.debug("Generating response...");
-    let assistantText: string = "";
-
-    if (chatParams.study.enableOnlineSearch === 0) {
-        // BUG: not working with Hugging Face model
-        if (chatParams.model.baseURL?.includes("huggingface")) {
-            // https://www.npmjs.com/package/@huggingface/inference
-            logger.debug("Using Hugging Face model...");
-            const huggingfaceModelMessages = messages.map((message) => ({
-                role: message.role,
-                content: message.content
-            }));
-
-            try {
-                const huggingfaceModelResponse = await provider.chatCompletion({
-                    model: chatParams.model.name,
-                    messages: huggingfaceModelMessages
-                });
-                logger.debug(huggingfaceModelResponse, "Hugging Face model response:")
-                assistantText = huggingfaceModelResponse.choices[0].message.content;
-            } catch (error) {
-                assistantText = "Error with Hugging Face model. " + error;
-                logger.error(error, "Error with Hugging Face model:");
-            }
-        } else {
-            const promptContent = generatePromptTemplateContent(messages, promptSystem);
-            const parser = new StringOutputParser();
-            const promptTemplate = ChatPromptTemplate.fromMessages(promptContent);
-            const conversationChain = promptTemplate.pipe(provider).pipe(parser);
-            assistantText = await conversationChain.invoke({});
-        }
-    } else {  // online search enabled
-
-        // determine whether to perform online search
-        let performSearch = false;
-        // always search if there's only 1 (system) message
-        if (messages.length === 1 && messages[0].role === "system") {
-            performSearch = true;
-        } else {
-            // check whether the last message requires online search
-            const lastMessage = messages[messages.length - 1];
-            const chain = checkIfMessageRequiresSearch(lastMessage, provider);
-            const response = await chain.invoke({});
-            // const response = 'question';
-            logger.debug("Message type: " + response);
-            response.toLowerCase().includes("other") ? performSearch = false : performSearch = true;
-        }
-
-        // perform online search if needed
-        let searchResults = "";
-        if (performSearch) {
-            const provider = createOnlineSearchProvider(chatParams);
-            let chainOnlineSearch = performOnlineSearch(messages, promptSystem, provider);
-            searchResults = await chainOnlineSearch.invoke({});
-            logger.debug("Search results:\n" + searchResults);
-        } else {
-            logger.debug("No online search needed");
-        }
-
-        // update messages with search results
-        const updated = updateMessageWithSearchResults(messages, promptSystem, searchResults);
-
-        // generate response with updated messages
-        const promptContent = generatePromptTemplateContent(updated.messagesClone, updated.promptSystem);
-        const parser = new StringOutputParser();
-        const promptTemplate = ChatPromptTemplate.fromMessages(promptContent);
-        const conversationChain = promptTemplate.pipe(provider).pipe(parser);
-
-        let searchResultsFormatted = "";
-        if (chatParams.study.enableOnlineSearch > 0 && performSearch) {
-            searchResultsFormatted = `<div class='!text-indigo-400'>Online search results\n\n${searchResults}<hr></div>\n\n`;
-            if (chatParams.study.enableOnlineSearch === 1) {
-                searchResultsFormatted = `<!--${searchResultsFormatted}-->`;  // hide results in ai text
-            } else if (chatParams.study.enableOnlineSearch === 3) {
-                searchResultsFormatted = ""; // do not include search results in ai text
-            }
-        }
-
-        if (chatParams.ui.stream) {
-            // prepend search results to stream
-            const prefixStream = new TransformStream({
-                start(controller) {
-                    controller.enqueue(searchResultsFormatted);
-                },
-                transform(chunk, controller) {
-                    controller.enqueue(chunk);
-                }
-            });
-
-            const responseStream = (await conversationChain.stream({})).pipeThrough(prefixStream);
-            const httpResponse = new Response(responseStream, {
-                headers: {
-                    "Content-Type": "text/plain; charset=utf-8",
-                },
-            });
-            logger.debug("=============================================")
-            return httpResponse;
-        } else {
-            assistantText = await conversationChain.invoke({});
-            assistantText = searchResultsFormatted + assistantText;
-        }
-    }
-    logger.debug("Generated and returning response");
-    logger.debug("=============================================")
-
-    return generateResponse(assistantText);
+// Keeps the newest messages whose combined length fits the budget. The last message (the
+// visitor's new one) is always kept.
+function keepMostRecent(messages: TurnMessage[], budgetChars: number): TurnMessage[] {
+	let used = 0;
+	let start = messages.length;
+	while (start > 0) {
+		const length = messages[start - 1].content.length;
+		if (start < messages.length && used + length > budgetChars) break;
+		used += length;
+		start--;
+	}
+	return messages.slice(start);
 }
 
+function chunkText(chunk: AIMessageChunk): string {
+	if (typeof chunk.content === 'string') return chunk.content;
+	return chunk.content.map((part) => (part.type === 'text' ? (part as { text: string }).text : '')).join('');
+}
 
-
+// Saving a transcript must never break or noticeably stall the chat.
+async function saveSafely(save: () => Promise<void>): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			save(),
+			new Promise((_, reject) => {
+				timer = setTimeout(() => reject(new Error('timed out')), SAVE_TIMEOUT_MS);
+			})
+		]);
+	} catch (error) {
+		logger.error(error, 'Failed to save transcript:');
+	} finally {
+		clearTimeout(timer);
+	}
+}

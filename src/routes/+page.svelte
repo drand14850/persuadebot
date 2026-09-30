@@ -5,32 +5,27 @@
 		messageInfo,
 		messages,
 	} from "$lib/messages";
-	import { syncConversation } from "$lib/db";
 	import { isLoading } from "$lib/stores";
 	import { afterUpdate, onMount } from "svelte";
+	import type { PageData } from "./$types";
 	import Counter from "./components/Counter.svelte";
 	import InputForm from "./components/InputForm.svelte";
 	import Messages from "./components/Messages.svelte";
-	import ModalApiKey from "./components/ModalAPIKey.svelte";
 	import ScrollProceedNextSection from "./components/ScrollProceedNextSection.svelte";
 	import ScrollToBottomButton from "./components/ScrollToBottomButton.svelte";
 	import {
 		countTimeElapsed,
 		enableSubmit,
-		getUserAgentInfo,
 		handleScroll,
-		inFrame,
 		initializeChat,
 		isAtBottom,
-		isInFrame,
 		isLoaded,
-		noAPIKeyProvided,
 		scrolledUponSubmit,
 		scrollToBottom,
-		sendMessageToParent,
-		sendMessageUntilReceived,
 		toggleInputElementOpacity,
 	} from "./utils";
+
+	export let data: PageData;
 
 	let nextSection: boolean = false;
 	let scrollElement: HTMLDivElement;
@@ -66,45 +61,20 @@
 	$: if (!$enableSubmit) {
 		// when the send/submit button for the input field has been disabled
 		nextSection = true;
-		sendMessageToParent($messages, nextSection);
-		// Save point 4: chat ended. Catches thumb ratings and highlights applied after the
-		// last assistant turn — wherever Qualtrics gets data, so does the database.
-		void syncConversation();
 		scrollToBottom(scrollElement);
 		console.log("ENDING CHAT.");
 	}
 
 	onMount(() => {
-		console.log("APP MOUNTED: =============================");
 		countTimeElapsed();
-
-		// listener function to handle messages from parent
-		function handleMessage(event: MessageEvent) {
-			initializeChat(scrollElement, nextSection, event);
-		}
-
-		getUserAgentInfo();
 		isAtBottom.set(true);
-		inFrame.set(isInFrame(window));
-
-		if ($inFrame) {
-			window.addEventListener("message", handleMessage);
-			console.log("Running as iframe and requesting data from parent...");
-			sendMessageUntilReceived(window);
-		} else {
-			console.log("Running as a standalone app (not iframe)");
-			initializeChat(scrollElement, nextSection);
-		}
-
-		return () => {
-			window.removeEventListener("message", handleMessage);
-		};
+		initializeChat(data.bot);
 	});
 </script>
 
-{#if $noAPIKeyProvided}
-	<ModalApiKey />
-{/if}
+<svelte:head>
+	<title>{data.bot.title}</title>
+</svelte:head>
 
 {#if $isLoaded}
 	<main class="h-svh flex flex-col">
@@ -132,6 +102,12 @@
 				{:else if !$enableSubmit && nextSection && $messageDisplaySetting.doneReading}
 					<ScrollProceedNextSection />
 				{/if}
+			{/if}
+
+			{#if $chatParams.appearance.notice}
+				<p class="text-xs text-center text-slate-500 mt-2">
+					{$chatParams.appearance.notice}
+				</p>
 			{/if}
 		</div>
 	</main>

@@ -1,27 +1,17 @@
 
 import type { ChatMessageType, ChatParamsType } from "$lib/chatParams";
 import { chatParams, updateChatParams } from "$lib/chatParams";
-import { addAIMessage, addUserMessage, countMessages, initialMessages, messageDisplaySetting, messageInfo, messages, processInitialMessages, type MessageInfoType, addEmptyAIMessage } from "$lib/messages";
-import { initConversationId, syncConversation } from "$lib/db";
-import { allowedOrigins, highlightedStrings, isLoading, thumbs } from "$lib/stores";
+import { addAIMessage, addEmptyAIMessage, addErrorMessage, addUserMessage, countMessages, getHistoryForServer, initialMessages, messageDisplaySetting, messageInfo, messages, processInitialMessages, removeEmptyAIMessage } from "$lib/messages";
+import type { PublicBotConfig } from "$lib/server/botConfig";
+import { isLoading } from "$lib/stores";
 import { tick } from "svelte";
 import { get, writable, type Writable } from "svelte/store";
-import type { IResult } from "ua-parser-js";
-import { UAParser } from "ua-parser-js";
 
-interface UserAgentInfoType {
-    client: any;
-}
-
-export interface DataItemType {
-    userAgentInfo: any;
-    // Add other properties as needed
-}
+const ERROR_TEXT = "Sorry, something went wrong on our side. Please try sending your message again.";
+const CUT_OFF_NOTE = "\n\n_(The reply was cut off. Please try again.)_";
 
 // Local Utils variables:
 export const scrolledUponSubmit: Writable<boolean> = writable(false);
-export const inFrame: Writable<boolean> = writable(false);
-export const noAPIKeyProvided: Writable<boolean> = writable(false);
 export const lastScrollTop: Writable<number> = writable(0);
 // Stores for managing scroll states:
 export const continueScroll: Writable<boolean> = writable(true);
@@ -35,30 +25,21 @@ export const userSentMessage: Writable<boolean> = writable(false);
 export const timeStart: Writable<number> = writable(0);  // or new Date().getTime()
 
 export const timeReceivedResponse: Writable<number> = writable(0);
-export const receivedParentMessage: Writable<boolean> = writable(false);
 export const isLoaded: Writable<boolean> = writable(false);
 
-export const userAgentInfo = writable<UserAgentInfoType>({
-    client: {},
-});
+// One id per page load; the server groups saved transcripts by it. A reload starts over.
+let conversationId = "";
 
-
-export function getUserAgentInfo(): void {
-
-    let userAgentClient = new UAParser();
-    const uaClientInfo = userAgentClient.getResult() as IResult & {
-        size?: { width: number; height: number };
-        mobile?: boolean;
-    };
-    uaClientInfo.size = {
-        width: window.innerWidth,
-        height: window.innerHeight,
-    };
-    uaClientInfo.mobile = window.innerWidth < 640;
-    userAgentInfo.update((x) => {
-        return { ...x, client: uaClientInfo };
-    });
+function newConversationId(): string {
+    if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    // randomUUID needs a secure context; getRandomValues does not.
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
 
 export function toggleInputElementOpacity(): void {
     if (get(isLoading)) {
@@ -146,26 +127,6 @@ export const sleep = (seconds: number) => {
 };
 
 
-
-export async function sendMessageUntilReceived(window: Window) {
-    let nMessageAttempts = 0;
-    while (!get(receivedParentMessage)) {
-        nMessageAttempts = nMessageAttempts + 1;
-        console.log(
-            `Sending/requesting message to/from parent (${nMessageAttempts})...`,
-        );
-        const message = JSON.stringify({ requestData: true });
-        window.parent.postMessage(message, "*");
-        await sleep(1);
-    }
-}
-
-
-export function isInFrame(window: Window): boolean {
-    return typeof parent !== "undefined" && parent !== window;
-}
-
-
 export function countTime(): void {
     timeNow.set(new Date().getTime());
     let currentTime: number = get(timeNow);
@@ -233,58 +194,6 @@ export async function showButtonAfterDelay(stream: boolean = true, messages: Cha
     console.log("Expected reading time over");
 }
 
-function prepareParentMessage(
-    messages: ChatMessageType[],
-    nextSection: boolean,
-): string {
-
-    // remove initialMessages from chatParams to save space
-    const { initialMessages, ...chatParamsClone } = structuredClone(get(chatParams));
-
-    let messageForParent: { messages: ChatMessageType[], userAgentInfo: UserAgentInfoType, thumbs: any[], highlightedStrings: string[], messageInfo: MessageInfoType, nextSection: boolean, chatParams: any } = {
-        messages: [],
-        userAgentInfo: get(userAgentInfo).client,
-        thumbs: get(thumbs),
-        highlightedStrings: get(highlightedStrings),
-        messageInfo: get(messageInfo),
-        nextSection,
-        chatParams: chatParamsClone,
-    };
-
-    let firstMessageTime = new Date(messages[0].createdAt || Date.now());
-    let chatHistoryProcessed: any[] = [];
-    messages.forEach((message, idx: number) => {
-        const messageTime = new Date(message.createdAt || Date.now());
-        const timeElapsedInSeconds = (messageTime.getTime() - firstMessageTime.getTime()) / 1000;
-        chatHistoryProcessed.push({ role: message.role, content: message.content, createdAt: timeElapsedInSeconds, id: idx })
-    });
-    messageForParent.messages = chatHistoryProcessed;
-
-    // stringify messageForParent and split into smaller chunks
-    let messageForParentString = JSON.stringify(messageForParent);
-    let messageForParentStringSplitArray: string[] = []
-    const chunkSizeCharacter = 19000;  // qualtrics text input limit is 20000 characters
-    for (let i = 0; i < messageForParentString.length; i += chunkSizeCharacter) {
-        messageForParentStringSplitArray.push(messageForParentString.substring(i, i + chunkSizeCharacter));
-    }
-
-    messageForParentString = JSON.stringify(messageForParentStringSplitArray);
-    console.log(`Sending message to parent (${messageForParentStringSplitArray.length} messages chunks, ${messageForParentString.length} characters total)`, messageForParent);
-
-    return JSON.stringify(messageForParentStringSplitArray);
-}
-
-
-
-export function sendMessageToParent(
-    messages: ChatMessageType[],
-    nextSection: boolean,
-) {
-    if (messages.length === 0) return;  // no messages to send to parent
-    let parentMessage = prepareParentMessage(messages, nextSection);
-    window.parent.postMessage(parentMessage, "*");
-}
-
 
 export function handlePostChat(
     allMessages: ChatMessageType[],
@@ -306,17 +215,8 @@ export function handlePostChat(
         toggleInputElementOpacity();
     }
 
-    if (get(inFrame)) {
-        console.log("Received AI response. Message parent.");
-        sendMessageToParent(allMessages, nextSection);
-    } else {
-        console.log("Received AI response.");
-    }
-
     countMessagesAndTime(allMessages);
     logMessageTypeCount(allMessages);
-    console.log('messages:', allMessages);
-    console.log('END: ====================================\n\n');
 }
 
 
@@ -342,97 +242,34 @@ function logMessageTypeCount(messages: ChatMessageType[]): void {
 }
 
 
-export function isCorrectOriginAndData(event: MessageEvent): boolean {
-    // not in frame, so don't need to check origin and data
-    if (typeof parent === "undefined" || parent === window) return false;
+// Applies the public settings served with the page (see +page.server.ts). The prompt and model
+// are not among them: the server adds those to every request itself.
+export function initializeChat(bot: PublicBotConfig) {
 
-    const origin = event.origin.toLowerCase();
+    conversationId = newConversationId();
 
-    // skip vercel.live
-    if (origin.includes("vercel.live")) {
-        return false;
-    }
-    let parentObj;
-    if (get(allowedOrigins).some((allowedOrigin) => origin.includes(allowedOrigin))) {
-        console.log("Received message from parent (allowed origin):", origin);
-        parentObj = event.data;
-        if (!parentObj) return false; // no data received from parent
-        try {
-            // process data from parent
-            parentObj = JSON.parse(parentObj);
-            // in case parent sends other irrelevant stuff to the app
-            if (!parentObj.model) {
-                // console.error("Incorrect parentObj received:", parentObj);
-                return false;
-            }
-        } catch (error) {
-            return false;
-        }
-        console.log("app received correct messages/chatParams from parent:", event);
-        return true;
-    } else {
-        console.log("Received message from parent (unknown origin):", origin);
-        return false;
-    }
+    const greeting: ChatMessageType[] = bot.greeting.trim()
+        ? [{ role: "assistant", content: bot.greeting, hideInitialMessage: false } as ChatMessageType]
+        : [];
 
-}
+    updateChatParams({
+        study: {
+            // 0 in the admin settings means unlimited
+            maxUserMessages: bot.maxUserMessages > 0 ? bot.maxUserMessages : Infinity,
+        },
+        initialMessages: greeting,
+        ui: {
+            assistantMessageOnLoad: false,
+        },
+        appearance: {
+            placeHolderInputText: bot.placeholder,
+            endChatText: bot.endText,
+            notice: bot.notice,
+            botAvatarUrl: bot.avatarUrl,
+        },
+    });
 
-
-// Sanity checks on what Qualtrics just handed the app. These only warn, never throw: a
-// misconfigured survey should still run, but the researcher gets a signal in the console
-// instead of finding out after data collection. Add further checks here.
-export function checkInitialParams(): void {
-    // The system prompt is not its own field; it is whatever initial messages carry
-    // role "system". Joining them means "empty" covers both cases: no system message at
-    // all, and a system message piped in blank from an unset Qualtrics field.
-    const systemPrompt = get(initialMessages)
-        .filter((message) => message.role === "system")
-        .map((message) => message.content ?? "")
-        .join("")
-        .trim();
-
-    if (systemPrompt === "") {
-        console.warn(
-            "CHECK FAILED: system prompt is empty. No initial message with role 'system' has content, so the model runs with no instructions.",
-        );
-    }
-}
-
-export function initializeChat(
-    scrollElement: HTMLDivElement,
-    nextSection: boolean,
-    event?: MessageEvent,
-) {
-
-    let parentObj;
-    if (get(inFrame) && event) {  // is in iframe, so chatParams come from messages
-        if (isCorrectOriginAndData(event)) {
-            parentObj = JSON.parse(event.data);
-        } else {
-            console.error("Origin not allowed or incorrect parentObj received:", event);
-        }
-    } else if (!get(inFrame) && !event) {  // not in iframe, so chatParams come from localStorage
-        parentObj = localStorage.getItem("parentObj");
-        if (parentObj) {
-            parentObj = JSON.parse(parentObj);
-            console.log("Found parentObj in localStorage", parentObj);
-        }
-    }
-
-    updateChatParams(parentObj);
-    if (!checkIfAPIKeyExist()) {
-        receivedParentMessage.set(true);
-        return;
-    }
-
-    if (!parentObj) {
-        console.error("No parentObj received. Exiting...");
-        return;
-    } else {
-        receivedParentMessage.set(true);
-    }
     processInitialMessages();
-    checkInitialParams();
 
     messageInfo.update((x) => {
         return {
@@ -441,139 +278,70 @@ export function initializeChat(
         };
     });
 
-    // Save point 1: initial messages received from Qualtrics.
-    // No await anywhere: a slow or broken database must never delay the chat.
-    initConversationId();
-    void syncConversation();
-
-    if (get(inFrame) && parentObj) {
-        console.log(
-            "Updated chatParams with parentObj (after receiving message from parent):",
-            get(chatParams),
-        )
-    } else if (!get(inFrame) && parentObj) {
-        console.log(
-            "Updated chatParams with parentObj from localStorage:",
-            get(chatParams),
-        );
-    }
-
-    if (get(chatParams).ui.assistantMessageOnLoad && get(initialMessages).length > 0) {
-        handleChatInteraction(true, "", scrollElement, nextSection);
-    }
     isLoaded.set(true);
-
 };
 
-function checkIfAPIKeyExist(): boolean {
-    if (get(chatParams).model.apiKeyEncrypted === "" || !get(chatParams).model.apiKeyEncrypted) {
-        isLoaded.set(false);
-        console.error("Please provide an encrypted API key to continue.");
-        noAPIKeyProvided.set(true);
-        return false;
-    } else {
-        return true;
-    }
-}
 
-async function fetchChatResponse(stream: boolean = false) {
+type ChatResult = { ok: true; body: ReadableStream<Uint8Array> } | { ok: false; status: number };
 
-    let resp;
-    let response: Response | undefined = undefined;
-
+async function fetchChatResponse(): Promise<ChatResult> {
     try {
-        response = await fetch("/api/chat", {
+        const response = await fetch("/api/chat", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                // Drop UI-only placeholders. addEmptyAIMessage() appends an empty assistant
-                // message with no id to trigger the loading avatar; it is not a real turn.
-                // Sending it made the server log a validation error on every request, and the
-                // server discarded it immediately afterwards anyway.
-                messages: get(messages).filter((message) => message.id),
-                chatParams: get(chatParams),
+                conversationId,
+                messages: getHistoryForServer(),
             }),
         });
-
+        if (response.ok && response.body) {
+            return { ok: true, body: response.body };
+        }
+        console.error(`Chat request failed (${response.status}): ${await response.text()}`);
+        return { ok: false, status: response.status };
     } catch (error) {
-        const msg = "Error with fetch request (fetchChatResponse): /api/chat";
-        resp = { aiText: msg };
-        console.error(msg, error);
-    }
-
-    if (stream && response) {  // streaming
-        if (response.status !== 200) {
-            const status = response.status;
-            let msg: string = "";
-            if (response.status === 401) {
-                msg = "Error 401 (unauthorized request): Check API key.";
-            } else {
-                msg = `Error with streaming request ${status}.`;
-            }
-            console.error(msg);
-            resp = { aiText: msg };  // make chatbot show error message
-            return resp;
-        } else if (response.body === null) {
-            const msg = "Response body is null";
-            console.error(msg);
-            resp = { aiText: msg };
-            return resp;
-        } else {
-            return response;
-        }
-    } else if (response) {  // not streaming
-        if (response.status === 401) {
-            const msg = "Error 401 (unauthorized request): Check API key.";
-            resp = { aiText: msg };  // make chatbot show error message
-        } else {
-            resp = await response.json();
-            if (resp.message == "Internal Error") {
-                resp = { aiText: "Internal Error" };
-                throw new Error("Error with handleChatInteraction request");
-            }
-        }
-        return resp;
+        console.error("Chat request failed (network error):", error);
+        return { ok: false, status: 0 };
     }
 }
 
 export async function handleChatInteraction(
-    sendInitial: boolean = false,
-    userInputText: string = "",
+    userInputText: string,
     scrollElement: HTMLDivElement,
     nextSection: boolean
 ) {
+    if (userInputText === "" || userInputText === undefined) return;
+
     isLoading.set(true);
+    addUserMessage(userInputText);
+    addEmptyAIMessage();  // to trigger loading avatar
 
-    // push latest message that needs to be sent over: either initial messages or user message
-    if (!sendInitial) {
-        if (userInputText === "" || userInputText === undefined) {
-            return;
-        } else {
-            addUserMessage(userInputText);
-            void syncConversation();  // Save point 2: participant sent a message
-        }
-    }
-
-    if (get(chatParams).ui.stream) {
-        addEmptyAIMessage();  // to trigger loading avatar
-    }
-    const response = await fetchChatResponse(get(chatParams).ui.stream);
+    const result = await fetchChatResponse();
     timeReceivedResponse.set(new Date().getTime());
-    if (get(chatParams).ui.stream) { // streaming
-        if (response && response.body) {
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder("utf-8");
-            let scrolled = false;
-            let streamedText = "";   // store the streamed text to check for stop keyword
+
+    if (!result.ok) {
+        if (result.status === 429) {
+            // Message limit reached on the server (e.g. lowered mid-conversation): end the chat.
+            removeEmptyAIMessage();
+            enableSubmit.set(false);
+        } else {
+            addErrorMessage(ERROR_TEXT);
+        }
+        isLoading.set(false);
+    } else {
+        const reader = result.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let scrolled = false;
+        let streamedText = "";   // store the streamed text to check for stop keyword
+        try {
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) {
-                    isLoading.set(false);
-                    break;
-                }
-                const chunk = decoder.decode(value);
+                if (done) break;
+                // stream: true keeps a character split across two chunks from being garbled
+                const chunk = decoder.decode(value, { stream: true });
+                if (chunk === "") continue;
                 streamedText += chunk;
                 addAIMessage(chunk, true);
                 // throttle stream so it doesn't load too fast for user to read (to avoid skimming)
@@ -583,42 +351,21 @@ export async function handleChatInteraction(
                     scrolled = true;
                 }
             }
-            if (checkForStopKeyword(streamedText, get(chatParams))) {
-                nextSection = true;
-            }
-        } else {
-            if (response && response.aiText) {
-                addAIMessage(response.aiText, true);
-                isLoading.set(false);
-            } else {
-                console.error('Response object for stream or body is null.');
-            }
-        }
-    } else {  // not streaming
-        try {
-            addAIMessage(response.aiText);
-            isLoading.set(false);
         } catch (error) {
-            console.error("Error with generateText response", error, response);
-            isLoading.set(false);
+            console.error("Reply stream interrupted:", error);
+            if (streamedText === "") {
+                addErrorMessage(ERROR_TEXT);
+            } else {
+                addAIMessage(CUT_OFF_NOTE, true);
+            }
         }
-        // stop the conversation if the stop keyword is detected
-        if (checkForStopKeyword(response.aiText, get(chatParams))) {
+        isLoading.set(false);
+        if (checkForStopKeyword(streamedText, get(chatParams))) {
             nextSection = true;
         }
     }
 
-    // Save point 3: assistant finished generating or streaming
-    void syncConversation();
-
     handlePostChat(get(messages), nextSection, scrollElement);
-
-    if (
-        get(chatParams).ui.showInputBasedOnReadingTime &&
-        !get(chatParams).ui.stream
-    ) {
-        showButtonAfterDelay(false, get(messages));
-    }
 }
 
 function delay(ms: number) {
@@ -633,22 +380,3 @@ function checkForStopKeyword(text: string, chatParams: ChatParamsType): boolean 
     }
     return false;
 }
-
-
-
-
-
-
-// Demo mode has two independent triggers: the build-time PUBLIC_VERSION variable, or an app
-// URL served from the vegapunkdemo deployment. The URL check exists because PUBLIC_VERSION is
-// inlined at build time, so a deployment built without it cannot be switched to demo mode
-// without a rebuild — matching on the URL the parent page reports covers that case.
-export const addDemoMessage = (text: string, version: string, isLoading: boolean, isLastMessage: boolean, appURL: string = ""): string => {
-    const isDemo = version === "demo" || (appURL ?? "").toLowerCase().includes("vegapunkdemo");
-    if (!isDemo || isLoading || !isLastMessage) return text;
-    let extraMessage = " This chatbot is only for demonstration only. Purchase the app to remove this message."
-
-    extraMessage = `<div class="shadow-sm bg-[#a9e415] rounded-lg p-1 text-[#6569d4] font-semibold">${extraMessage}</div>`
-
-    return text + "\n\n" + extraMessage;
-};

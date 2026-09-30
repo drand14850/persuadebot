@@ -13,6 +13,7 @@ export interface ChatMessageType {
     createdAt: Date;
     thumb?: string;
     thumbAt?: Date;
+    isError?: boolean;
     role: 'user' | 'assistant' | 'system';
 }
 
@@ -121,6 +122,39 @@ export function addAIMessage(aiText: string, stream: boolean = false): void {
     messages.set(processMessages(get(messages), true));
 }
 
+// Shows a notice in an assistant bubble (replacing the loading placeholder, if any). It is
+// flagged isError so getHistoryForServer() never sends it to the model as something it said.
+export function addErrorMessage(text: string): void {
+    messages.update((currentMessages) => {
+        const updatedMessages = [...currentMessages];
+        const last = updatedMessages[updatedMessages.length - 1];
+        if (last && last.role === "assistant" && last.content === "") {
+            updatedMessages.pop();
+        }
+        updatedMessages.push({ ...generateNewAIMessage(text), isError: true });
+        return updatedMessages;
+    });
+    messages.set(processMessages(get(messages), true));
+}
+
+export function removeEmptyAIMessage(): void {
+    messages.update((currentMessages) => {
+        const last = currentMessages[currentMessages.length - 1];
+        if (last && last.role === "assistant" && last.content === "") {
+            return currentMessages.slice(0, -1);
+        }
+        return currentMessages;
+    });
+}
+
+// The conversation as the server expects it: real turns only, no placeholders or notices.
+export function getHistoryForServer(): { role: 'user' | 'assistant'; content: string }[] {
+    return get(messages)
+        .filter((message) => message.id && !message.isError && message.content !== "")
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .map((message) => ({ role: message.role as 'user' | 'assistant', content: message.content }));
+}
+
 export function addEmptyAIMessage(): void {
     messages.update((currentMessages) => [
         ...currentMessages,
@@ -206,7 +240,7 @@ export function processInitialMessages(): void {
 
 
 function validateMessages(messages: ChatMessageType[], clientSide: boolean = true, initialMessage: boolean = false): ChatMessageType[] {
-    const validKeys = ['id', 'content', 'hideInitialMessage', 'isInitial', 'createdAt', 'thumb', 'thumbAt', 'role'];
+    const validKeys = ['id', 'content', 'hideInitialMessage', 'isInitial', 'createdAt', 'thumb', 'thumbAt', 'isError', 'role'];
     const validRoles = ['user', 'assistant', 'system'];
     const errors: any[] = [];
 

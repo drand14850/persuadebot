@@ -1,4 +1,6 @@
-# This app is a chatbot embedded in Qualtrics surveys, not a public site, so nothing here
-# should be indexed.
+# Keeps search engines from indexing the chatbot, so visitors arrive only through links you
+# share. To let the chat page show up in search results, change the rules to:
+#   User-agent: *
+#   Disallow: /admin
 User-agent: *
 Disallow: /
