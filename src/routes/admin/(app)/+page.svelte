@@ -16,9 +16,13 @@
 	$: dirty = JSON.stringify(values) !== JSON.stringify(data.current.config);
 	$: errors = (form?.errors ?? {}) as Partial<Record<keyof BotConfig, string[]>>;
 	$: canSave = data.dbMode !== 'none' && !data.dbError;
-	$: modelKnown =
-		data.models.length === 0 ||
-		data.models.some((m) => values.model === m.id || values.model.startsWith(`${m.id}:`));
+	// The catalogue entry for the typed id. A suffix such as ":online" is allowed, so the longest
+	// matching id wins (e.g. "x:free" over "x" for "x:free:online").
+	$: selectedModel = data.models
+		.filter((m) => values.model === m.id || values.model.startsWith(`${m.id}:`))
+		.sort((a, b) => b.id.length - a.id.length)[0];
+	$: modelKnown = data.models.length === 0 || selectedModel !== undefined;
+	$: searchNeedsTools = values.webSearch === 'auto' && selectedModel !== undefined && !selectedModel.tools;
 
 	function loadVersion(id: number, config: BotConfig) {
 		values = structuredClone(config);
@@ -136,13 +140,19 @@
 						Start typing to pick from OpenRouter's current list (prices are per million tokens), or
 						browse <a class="link" href="https://openrouter.ai/models" target="_blank" rel="noopener"
 							>openrouter.ai/models</a
-						>. Add <code>:online</code> to the end to let the model search the web (costs extra).
+						>. To let it look things up online, use <b>Web search</b> below.
 					</span>
 					{#if errors.model}
 						<span class="text-error text-xs mt-1">{errors.model[0]}</span>
 					{:else if !modelKnown}
 						<span class="text-warning text-xs mt-1">
 							This id isn't in OpenRouter's current list. Check the spelling before saving.
+						</span>
+					{/if}
+					{#if values.model.endsWith(':online')}
+						<span class="text-warning text-xs mt-1">
+							This id ends in <code>:online</code>, so it searches before every reply whatever
+							<b>Web search</b> says. Remove <code>:online</code> and choose a Web search option instead.
 						</span>
 					{/if}
 				</label>
@@ -178,11 +188,51 @@
 							class:input-error={errors.maxTokens}
 						/>
 						<span class="text-xs text-base-content/60 mt-1">
-							A token is roughly ¾ of a word. Replies stop at this length.
+							A token is roughly ¾ of a word. Replies stop at this length. With web search on, room
+							for the search is added on top automatically.
 						</span>
 						{#if errors.maxTokens}<span class="text-error text-xs">{errors.maxTokens[0]}</span>{/if}
 					</label>
 				</div>
+
+				<label class="form-control">
+					<span class="label-text mb-1">Web search</span>
+					<select
+						name="webSearch"
+						bind:value={values.webSearch}
+						class="select select-bordered"
+						class:select-error={errors.webSearch || searchNeedsTools}
+					>
+						<option value="off">Off</option>
+						<option value="auto">When needed: the model decides</option>
+						<option value="always">Before every reply</option>
+					</select>
+					<span class="text-xs text-base-content/60 mt-1">
+						{#if values.webSearch === 'off'}
+							The model answers only from what it already knows.
+						{:else if values.webSearch === 'auto'}
+							The model searches only when a message needs current or specific information, and can
+							search more than once. Replies that search cost a few cents each, and offering search
+							makes every other message cost a little more too. (Measured with Claude Sonnet 5.5:
+							about 4¢ for a reply that searched, and 0.6¢ instead of 0.07¢ for a plain "hi".)
+						{:else}
+							Searches before every reply, even "hi", so every reply costs several times more than
+							without search.
+						{/if}
+						{#if values.webSearch !== 'off'}
+							Replies don't include source links unless the prompt asks. To get them, add: "When
+							you use web search, cite your sources as markdown links."
+						{/if}
+						Check real costs under Activity on openrouter.ai.
+					</span>
+					{#if searchNeedsTools}
+						<span class="text-error text-xs mt-1">
+							This model can't use tools, so it can't decide when to search and every message would
+							fail. Choose "Before every reply" or a different model.
+						</span>
+					{/if}
+					{#if errors.webSearch}<span class="text-error text-xs">{errors.webSearch[0]}</span>{/if}
+				</label>
 			</div>
 		</section>
 

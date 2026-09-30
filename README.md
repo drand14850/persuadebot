@@ -24,51 +24,62 @@ changed from a Qualtrics-embedded survey tool into a standalone public site.
 The prompt, model and API key never reach visitors' browsers. The server adds them to every
 request, so nobody can use the page to run their own prompts on your key.
 
-## Deploying (one-time setup, about 20 minutes)
+## Setting up your own copy (about 20 minutes)
 
-### 1. OpenRouter key
+Your copy is completely separate from the original: your own API key, database, prompt and
+transcripts. Nothing is shared.
 
-1. Create a key at <https://openrouter.ai/keys>.
+You'll need accounts with **GitHub**, **Vercel** and **Turso** (all free for this) and
+**OpenRouter** (pay-as-you-go credit for the AI model). No command line is needed.
+
+### 1. Copy the code to your GitHub account
+
+1. Sign in to GitHub and open <https://github.com/drand14850/persuadebot>.
+2. Click **Fork** (top right), then **Create fork**. You now have your own copy at
+   `github.com/YOUR-USERNAME/persuadebot`.
+
+Your fork is public, like the original. That's fine: the code holds no keys, prompts or
+conversations. Those live in your Vercel settings and your own database.
+
+### 2. OpenRouter key
+
+1. Create a key at <https://openrouter.ai/keys> (add some credit to your account if it has none).
 2. **Give the key a credit limit** (a daily or monthly one works well). The chat page is public
    and every message is paid for from this key. The limit caps what you can lose if someone
    abuses the page. When it's reached, the bot stops replying until the limit resets.
 
-### 2. Turso database
+### 3. Turso database
 
 1. Sign up at <https://turso.tech> and create a database.
 2. Copy its URL (it starts with `libsql://`) and create an auth token for it.
 
 The app creates its own tables the first time it runs, so there's nothing else to set up.
 
-### 3. Put the code on GitHub
-
-Create an empty repository on github.com (no README), then from this folder:
-
-```bash
-git add -A
-git commit -m "Public chatbot with admin page"
-git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPO.git
-git push -u origin main
-```
-
 ### 4. Vercel
 
-1. At <https://vercel.com/new>, import the GitHub repository and click **Deploy** straight away.
+1. At <https://vercel.com/new>, sign in with GitHub, find **your fork** in the list and click
+   **Import**, then **Deploy** straight away. If your fork isn't listed, use the link on that
+   page to give Vercel access to more of your GitHub repositories.
+
    The app builds fine without any settings. Until you add them, the chat can't reply and
    `/admin` says login is switched off.
 
    Deploy before adding the variables: Vercel won't save **Secret** variables for a SvelteKit
    project until it has at least one deployment. (It reads the deployment to check that the
    variable names won't be sent to browsers.)
+
+   If the project page says **No Production Deployment**, Vercel is waiting for a new commit.
+   On GitHub, open your fork, click `README.md`, click the pencil icon, add a blank line
+   anywhere and click **Commit changes**. Vercel builds every new commit to the `main` branch.
 2. In the project, go to **Settings → Environment Variables** and add each of these as type
    **Secret**, for the **Production** environment:
 
    | Name | Value |
    | --- | --- |
-   | `OPENROUTER_API_KEY` | the key from step 1 |
-   | `ADMIN_PASSWORD` | a password of **at least 12 characters** |
-   | `TURSO_DATABASE_URL` | the `libsql://...` URL from step 2 |
-   | `TURSO_AUTH_TOKEN` | the token from step 2 |
+   | `OPENROUTER_API_KEY` | the key from step 2 |
+   | `ADMIN_PASSWORD` | a password you choose, **at least 12 characters** |
+   | `TURSO_DATABASE_URL` | the `libsql://...` URL from step 3 |
+   | `TURSO_AUTH_TOKEN` | the token from step 3 |
 
 3. Redeploy so the deployment picks them up: **Deployments** → the latest one → **⋯** →
    **Redeploy**.
@@ -86,26 +97,51 @@ immediately.
 - **Going back to an old version:** click **Load** next to it under *Version history*, then
   **Save**.
 - **Trying it out:** click **Open chat ↗**. Reload the chat page to start a fresh conversation.
-- **Web search:** add `:online` to the end of the model id (e.g.
-  `anthropic/claude-sonnet-5.5:online`). This costs extra per message.
+- **Web search:** under *Model*, set **Web search** to **When needed** (the model searches
+  only when a message calls for it) or **Before every reply**. Search costs extra. Measured with
+  Claude Sonnet 5.5 on 2026-09-30, a reply that searched cost about 4¢. With **When needed**,
+  even messages that don't search cost a little more (0.6¢ instead of 0.07¢ for a plain "hi"),
+  because the model is told it can search. Replies that search take about 10 seconds. For
+  source links in replies, add this to your prompt: *When you use web search, cite your sources
+  as markdown links.*
 - **Reading conversations:** open **Transcripts**. Each bot reply is tagged with the prompt
   version that produced it, and the CSV downloads use the same version numbers.
 
-## Running it on your own computer
+## Getting updates from the original
 
-You need [Node.js](https://nodejs.org) 22.13 or newer.
+When the original repository changes, open your fork on GitHub and click **Sync fork** →
+**Update branch**. Vercel deploys the update on its own. Your prompt, settings and
+transcripts live in your database, so they're kept.
 
-```bash
-npm install
-```
+## Running it on your own computer (optional)
 
-```bash
-npm run dev
-```
+This is only for trying changes before they go live. You need [Git](https://git-scm.com) and
+[Node.js](https://nodejs.org) 22.13 or newer.
 
-Then open <http://localhost:5173> (chat) and <http://localhost:5173/admin>. Local settings
-live in `.env` (see `.env.example`). Without Turso details, local runs use a `local.db` file,
-so you can try everything before creating any accounts except OpenRouter.
+1. Download your fork and install its packages:
+
+   ```bash
+   git clone https://github.com/YOUR-USERNAME/persuadebot.git
+   ```
+
+   ```bash
+   cd persuadebot
+   ```
+
+   ```bash
+   npm install
+   ```
+
+2. Make a copy of `.env.example` named `.env`. In it, fill in `OPENROUTER_API_KEY` and
+   `ADMIN_PASSWORD`. Leave the Turso lines empty and local runs use a `local.db` file instead.
+3. Start it:
+
+   ```bash
+   npm run dev
+   ```
+
+   Then open <http://localhost:5173> (chat) and <http://localhost:5173/admin>. Messages sent
+   locally are charged to your OpenRouter key like any others.
 
 ## Things to know
 

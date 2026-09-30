@@ -61,6 +61,7 @@ export const actions: Actions = {
 			model: text(form, 'model'),
 			temperature: numberOrNull(text(form, 'temperature')),
 			maxTokens: Number(text(form, 'maxTokens')),
+			webSearch: text(form, 'webSearch'),
 			maxUserMessages: Number(text(form, 'maxUserMessages')),
 			placeholder: text(form, 'placeholder'),
 			notice: text(form, 'notice'),
@@ -72,6 +73,25 @@ export const actions: Actions = {
 		const parsed = BotConfigSchema.safeParse(values);
 		if (!parsed.success) {
 			return fail(400, { errors: parsed.error.flatten().fieldErrors, saveError: null });
+		}
+
+		// "Search when needed" is a tool call. With a model that can't call tools every chat request
+		// would fail, so refuse to save that rather than take the live bot down. Skipped when
+		// OpenRouter's list is unavailable or doesn't know the model.
+		if (parsed.data.webSearch === 'auto') {
+			const model = (await getModelOptions())
+				.filter((m) => parsed.data.model === m.id || parsed.data.model.startsWith(`${m.id}:`))
+				.sort((a, b) => b.id.length - a.id.length)[0];
+			if (model && !model.tools) {
+				return fail(400, {
+					errors: {
+						webSearch: [
+							`${model.id} can't use tools, so it can't search when needed. Choose "Before every reply" or a different model.`
+						]
+					},
+					saveError: null
+				});
+			}
 		}
 
 		if (dbMode() === 'none') {

@@ -3,6 +3,12 @@ import { z } from 'zod';
 // Everything the designer can change from /admin. The system prompt and model never leave the
 // server; the browser only ever receives the fields in PublicBotConfig.
 
+// off    = no web access
+// auto   = the model decides when (and how often) to search, via OpenRouter's web_search tool
+// always = search once before every reply, via OpenRouter's ":online" model variant
+export const WEB_SEARCH_MODES = ['off', 'auto', 'always'] as const;
+export type WebSearchMode = (typeof WEB_SEARCH_MODES)[number];
+
 export const BotConfigSchema = z.object({
 	title: z.string().trim().max(100),
 	systemPrompt: z.string().max(100_000),
@@ -18,6 +24,7 @@ export const BotConfigSchema = z.object({
 	temperature: z.number().min(0).max(2).nullable(),
 	// Capped so a reply always fits MAX_ASSISTANT_MESSAGE_CHARS in /api/chat (~4 chars/token).
 	maxTokens: z.number().int().min(16).max(8_000),
+	webSearch: z.enum(WEB_SEARCH_MODES),
 	// 0 means unlimited.
 	maxUserMessages: z.number().int().min(0).max(1_000),
 	placeholder: z.string().max(200),
@@ -41,6 +48,7 @@ export const DEFAULT_CONFIG: BotConfig = {
 	model: 'anthropic/claude-sonnet-5.5',
 	temperature: null,
 	maxTokens: 800,
+	webSearch: 'off',
 	maxUserMessages: 30,
 	placeholder: 'Type a message...',
 	notice: 'Conversations on this page are recorded and may be reviewed.',

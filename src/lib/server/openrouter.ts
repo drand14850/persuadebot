@@ -6,6 +6,8 @@ import { logger } from '$lib/logger';
 export interface ModelOption {
 	id: string;
 	label: string; // name and price per million tokens, shown next to the id
+	// Whether the model can call tools, which "search when needed" relies on.
+	tools: boolean;
 }
 
 const MODELS_URL = 'https://openrouter.ai/api/v1/models';
@@ -18,6 +20,7 @@ interface OpenRouterModel {
 	id: string;
 	name?: string;
 	pricing?: { prompt?: string; completion?: string };
+	supported_parameters?: string[];
 }
 
 function perMillion(price: string | undefined): string {
@@ -40,7 +43,9 @@ export async function getModelOptions(): Promise<ModelOption[]> {
 			.filter((m) => !m.id.endsWith(':batch'))
 			.map((m) => ({
 				id: m.id,
-				label: `${m.name ?? m.id} · in ${perMillion(m.pricing?.prompt)}/M · out ${perMillion(m.pricing?.completion)}/M tokens`
+				label: `${m.name ?? m.id} · in ${perMillion(m.pricing?.prompt)}/M · out ${perMillion(m.pricing?.completion)}/M tokens`,
+				// When OpenRouter doesn't say, assume yes rather than warn about a model that works.
+				tools: m.supported_parameters?.includes('tools') ?? true
 			}))
 			.sort((a, b) => a.id.localeCompare(b.id));
 
